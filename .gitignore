@@ -1,0 +1,65 @@
+#**************************************************************************
+#*                                                                        *
+#*                                 OCaml                                  *
+#*                                                                        *
+#*                 Damien Doligez, projet Gallium, INRIA                  *
+#*                                                                        *
+#*   Copyright 2015 Institut National de Recherche en Informatique et     *
+#*     en Automatique.                                                    *
+#*                                                                        *
+#*   All rights reserved.  This file is distributed under the terms of    *
+#*   the GNU Lesser General Public License version 2.1, with the          *
+#*   special exception on linking described in the file LICENSE.          *
+#*                                                                        *
+#**************************************************************************
+
+# general patterns
+
+*.o
+*.a
+*.so
+*.obj
+*.lib
+*.dll
+*.cm[ioxat]
+*.cmx[as]
+*.cmti
+*.annot
+*.exe
+*.exe.manifest
+.depend
+.depend.nt
+.DS_Store
+*.out
+*.out.dSYM
+*.swp
+*.opt
+
+# local to root directory
+
+/ocamlc
+/ocamlc.opt
+/expunge
+/ocaml
+/ocamlopt
+/ocamlopt.opt
+/package-macosx
+/ocamlnat
+
+# specific files and patterns in sub-directories
+
+/config/m.h
+/config/s.h
+/config/Makefile
+
+/parsing/parser.ml
+/parsing/parser.mli
+/parsing/lexer.ml
+/parsing/lexer_tmp.mll
+/parsing/lexer_tmp.ml
+/parsing/linenum.ml
+/parsing/parser.output
+/parsing/parser.automaton
+/parsing/parser.conflicts
+
+/utils/config.ml

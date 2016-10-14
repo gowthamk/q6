@@ -1,0 +1,1 @@
+./q6 -dtypedtree -c store_interface.mli store_interface.ml uuid.mli uuid.ml q6_interface.ml microblog.ml 2>1 typed_tree.out
