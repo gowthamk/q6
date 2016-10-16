@@ -18,23 +18,6 @@ OCAMLBUILDNATIVE=$(WITH_OCAMLBUILD:=.native)
 
 INCLUDES=-I utils -I parsing -I typing -I extraction -I driver
 
-##OTHERS=stdlib/list.cmo stdlib/char.cmo stdlib/bytes.cmo stdlib/string.cmo stdlib/sys.cmo\
-##	stdlib/sort.cmo stdlib/marshal.cmo stdlib/obj.cmo stdlib/array.cmo\
-##	stdlib/int32.cmo stdlib/int64.cmo stdlib/nativeint.cmo\
-##	stdlib/lexing.cmo stdlib/parsing.cmo\
-##	stdlib/set.cmo stdlib/map.cmo stdlib/stack.cmo stdlib/queue.cmo\
-##	stdlib/camlinternalLazy.cmo stdlib/lazy.cmo stdlib/stream.cmo\
-##	stdlib/buffer.cmo stdlib/camlinternalFormat.cmo stdlib/printf.cmo\
-##	stdlib/arg.cmo stdlib/printexc.cmo stdlib/gc.cmo\
-##	stdlib/digest.cmo stdlib/random.cmo stdlib/hashtbl.cmo stdlib/weak.cmo\
-##	stdlib/format.cmo stdlib/uchar.cmo stdlib/scanf.cmo stdlib/callback.cmo\
-##	stdlib/camlinternalOO.cmo stdlib/oo.cmo stdlib/camlinternalMod.cmo\
-##	stdlib/genlex.cmo stdlib/ephemeron.cmo\
-##	stdlib/filename.cmo stdlib/complex.cmo\
-##	stdlib/arrayLabels.cmo stdlib/listLabels.cmo stdlib/bytesLabels.cmo\
-##	stdlib/stringLabels.cmo stdlib/moreLabels.cmo stdlib/stdLabels.cmo\
-##	stdlib/spacetime.cmo
-
 UTILS=utils/config.cmo utils/misc.cmo \
   utils/identifiable.cmo utils/numbers.cmo utils/arg_helper.cmo \
   utils/clflags.cmo utils/tbl.cmo utils/timings.cmo \
@@ -66,14 +49,15 @@ TYPING=typing/ident.cmo typing/path.cmo \
   typing/typeclass.cmo \
   typing/typemod.cmo
 
-EXTRACTION=extraction/extract.cmo \
+EXTRACTION=extraction/utils.cmo extraction/RDTspec.cmo \
+	extraction/RDTextract.cmo \
 
 COMP=driver/pparse.cmo driver/main_args.cmo \
   driver/compenv.cmo driver/compmisc.cmo	\
 	driver/compile.cmo driver/main.cmo 
 
 # Top-level
-ALLOBJS=$(UTILS) $(PARSING) $(TYPING) $(EXTRACTION)$ $(COMP)
+ALLOBJS=$(UTILS) $(PARSING) $(TYPING) $(EXTRACTION) $(COMP)
 
 default: q6.opt
 	cp q6.opt ./examples/q6
@@ -102,6 +86,10 @@ clean: partialclean
 	(for d in utils parsing typing extraction driver; \
 	  do rm -f $$d/*.cm[ioxt] $$d/*.cmti $$d/*.annot $$d/*.[so] $$d/*~; done);
 	rm -f *~
+
+localclean:
+	(for d in extraction; \
+	  do rm -f $$d/*.cm[ioxt] $$d/*.cmti $$d/*.annot $$d/*.[so] $$d/*~; done);
 
 distclean:
 	$(MAKE) clean

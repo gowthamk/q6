@@ -27,7 +27,6 @@ open Compenv
 let tool_name = "ocamlc"
 
 let interface ppf sourcefile outputprefix =
-  Printf.printf "interface: %s\n" sourcefile;
   Compmisc.init_path false;
   let modulename = module_of_filename ppf sourcefile outputprefix in
   Env.set_unit_name modulename;
@@ -63,7 +62,6 @@ let print_if ppf flag printer arg =
 let (++) x f = f x
 
 let implementation ppf sourcefile outputprefix =
-  Printf.printf "implementation: %s\n" sourcefile;
   Compmisc.init_path false;
   let modulename = module_of_filename ppf sourcefile outputprefix in
   Env.set_unit_name modulename;
@@ -81,8 +79,9 @@ let implementation ppf sourcefile outputprefix =
           (Typemod.type_implementation sourcefile outputprefix modulename env)
       ++ print_if ppf Clflags.dump_typedtree
         Printtyped.implementation_with_coercion in
-    let _ = if is_app_mod sourcefile 
-            then Extract.doIt ppf typedtree else () in
+    let rdt_spec = if is_app_mod sourcefile 
+                   then Some (RDTextract.doIt ppf typedtree) 
+                   else None in
       if !Clflags.print_types then begin
         Warnings.check_fatal ();
         Stypes.dump (Some (outputprefix ^ ".annot"))
