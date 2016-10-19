@@ -11,7 +11,7 @@ module Tabletype = Id
 
 module Coltype = 
 struct
-  type t = Fkey of Tabletype.t | UUID | String | Int
+  type t = Fkey of Tabletype.t | UUID | String | Int | Bool
 end
 module Effcons = 
 struct

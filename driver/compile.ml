@@ -64,6 +64,7 @@ let (++) x f = f x
 let implementation ppf sourcefile outputprefix =
   Compmisc.init_path false;
   let modulename = module_of_filename ppf sourcefile outputprefix in
+  let _ = Printf.printf "implementation: %s\n" sourcefile in
   Env.set_unit_name modulename;
   let env = Compmisc.initial_env() in
   let is_app_mod sourcefile = 
@@ -80,8 +81,11 @@ let implementation ppf sourcefile outputprefix =
       ++ print_if ppf Clflags.dump_typedtree
         Printtyped.implementation_with_coercion in
     let rdt_spec = if is_app_mod sourcefile 
-                   then Some (RDTextract.doIt ppf typedtree) 
+                   then Some (Rdtextract.doIt ppf typedtree) 
                    else None in
+    let _ = Printf.printf "RDT spec extracted\n" in
+    let _ = match rdt_spec with | None -> None
+      | Some spec -> Some (Specelab.doIt spec) in
       if !Clflags.print_types then begin
         Warnings.check_fatal ();
         Stypes.dump (Some (outputprefix ^ ".annot"))

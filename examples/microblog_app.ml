@@ -30,6 +30,39 @@ struct
   include Store_interface.Make(UserName)
 end
 
+module Tweet =
+struct
+  type id = Uuid.t
+  type eff = New of {author_id:User.id; content:string}
+    | Get
+end
+module Tweet_table =
+struct
+  include Store_interface.Make(Tweet)
+end
+
+module Timeline = 
+struct
+  type id = User.id
+  type eff = NewTweet of {tweet_id:Tweet.id}
+    | Get
+end
+module Timeline_table =
+struct
+  include Store_interface.Make(Timeline)
+end
+
+module Userline = 
+struct
+  type id = User.id
+  type eff = NewTweet of {tweet_id:Tweet.id}
+    | Get
+end
+module Userline_table =
+struct
+  include Store_interface.Make(Userline)
+end
+
 let do_add_user name pwd = 
   let uid = Uuid.create() in
   begin
@@ -37,19 +70,17 @@ let do_add_user name pwd =
     User_table.append uid @@ User.Add {username=name;pwd=pwd}
   end 
 
-let rec sum l = match l with 
-  | [] -> 0
-  | x::xs -> x + (sum xs)
-
 let get_user_id_by_name nm = 
-  let ctxt = UserName_table.get nm (UserName.GetId) in
+  let ctxt = (* ea *) UserName_table.get nm (UserName.GetId) in
+    (* [sel(e0,ea); sel(e1,ea); sel(e2,ea)]@f(S,ea) *)
   let ids = List.concat @@ 
               List.map (function (UserName.Add {user_id=id}) -> [id] 
                           | _ -> []) ctxt in
-    match ids with
+  let res = match ids with
       | [] -> None
       | [id] -> Some id
-      | _ -> raise Inconsistency
+      | _ -> raise Inconsistency in
+    res
 
 let do_block_user me other  = 
   let Some my_id = get_user_id_by_name me in
@@ -60,3 +91,40 @@ let do_block_user me other  =
       User_table.append my_id (User.RemFollower {follower_id=other_id}); 
       User_table.append other_id (User.RemFollowing {leader_id=my_id})
     end
+
+let do_new_tweet uid str = 
+  let ctxt = User_table.get uid (User.GetFollowers) in
+  let fids = List.concat @@ List.map 
+               (function (User.AddFollower {follower_id}) -> [follower_id]
+                  | _ -> []) ctxt in
+
+  let tweet_id = Uuid.create() in
+    begin
+      Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});
+      Userline_table.append uid (Userline.NewTweet {tweet_id=tweet_id});
+      List.iter 
+        (fun fid -> Timeline_table.append fid 
+                      (Timeline.NewTweet {tweet_id=tweet_id})) fids;
+    end
+
+let get_tweet tid = 
+  let ctxt = Tweet_table.get tid (Tweet.Get) in
+  let tweets = List.concat @@
+                List.map (function (Tweet.New {content}) -> [content]
+                            | _ -> [] ) ctxt in
+  let res = match tweets with 
+    | [] -> None | [c] -> Some c
+    | _ -> raise Inconsistency in
+    res
+
+let get_userline uid = 
+  let ctxt = Userline_table.get uid (Userline.Get) in
+  let tids = List.concat @@ 
+               List.map 
+                 (fun x -> match x with 
+                    | (Userline.NewTweet {tweet_id}) -> [tweet_id] 
+                    | _ -> []) ctxt in
+  let tweets = List.map (fun tid -> match get_tweet tid with 
+                           | Some c -> c
+                           | None -> raise Inconsistency) tids in
+    tweets

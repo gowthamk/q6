@@ -1,6 +1,6 @@
 open Types
 open Typedtree
-open RDTspec
+open Rdtspec
 open Utils
 
 (* 
@@ -93,10 +93,17 @@ let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr)
             let (path,long_ident) = match core_t.ctyp_desc with 
               | Ttyp_constr (a,b,_) -> (a,b) 
               | _ -> failwith "doIt_if_id: Unimpl." in
-            let id_t = match (Printtyp.string_of_path path) with
-              | "Uuid.t" -> Coltype.UUID| "string" -> Coltype.String 
-              | "int" -> Coltype.Int
-              | s -> failwith ("Invalid id type: "^s) in
+            let id_t = let open Path in match path with
+              | Pident id when (Ident.name id = "string") -> Coltype.String 
+              | Pident id when (Ident.name id = "int") -> Coltype.Int 
+              | Pident id when (Ident.name id = "bool") -> Coltype.Bool 
+              | Pident id -> failwith @@ "Unknown id type: "^(Ident.name id)
+              | Pdot (Pident id,"t",_) when (Ident.name id = "Uuid") -> Coltype.UUID
+              | Pdot (Pident id,"id",_) -> 
+                  let tt = Tabletype.from_string @@ Ident.name id in
+                    Coltype.Fkey tt
+              | p -> failwith @@ 
+                        "Invalid id type: "^(Printtyp.string_of_path p) in
               [id_t]
         | _ -> [] in
   let doIt_if_eff {typ_name; typ_kind} = 
@@ -189,7 +196,7 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
                         ttype_mods in
   let (reads,writes,aux) = extract_funs str_items in
   let print_fname (name,expr) = Printf.printf "%s\n" name in
-  let rdt_spec = RDTspec.make ~schemas: ttype_schemas ~reads: reads
+  let rdt_spec = Rdtspec.make ~schemas: ttype_schemas ~reads: reads
                    ~writes:writes ~aux:aux in
     begin
       rdt_spec

@@ -47,26 +47,34 @@ TYPING=typing/ident.cmo typing/path.cmo \
   typing/includemod.cmo typing/typetexp.cmo typing/parmatch.cmo \
   typing/stypes.cmo typing/typedecl.cmo typing/typecore.cmo \
   typing/typeclass.cmo \
-  typing/typemod.cmo
+  typing/typemod.cmo 
 
-EXTRACTION=extraction/utils.cmo extraction/RDTspec.cmo \
-	extraction/RDTextract.cmo \
+#EXTRACTION=extraction/utils.cmo extraction/rdtspec.cmo \
+#  extraction/rdtextract.cmo extraction/speclang.cmo
+
+EXTRACTION= \
 
 COMP=driver/pparse.cmo driver/main_args.cmo \
   driver/compenv.cmo driver/compmisc.cmo	\
 	driver/compile.cmo driver/main.cmo 
 
 # Top-level
-ALLOBJS=$(UTILS) $(PARSING) $(TYPING) $(EXTRACTION) $(COMP)
+ALLOBJS=$(UTILS) $(PARSING) $(TYPING)  # $(EXTRACTION) $(COMP) 
 
 default: q6.opt
 	cp q6.opt ./examples/q6
 
+MYFILES=extraction/utils.cmx extraction/rdtspec.cmx extraction/rdtextract.cmi \
+				extraction/rdtextract.cmx extraction/speclang.cmx extraction/light_env.cmi \
+				extraction/light_env.cmx extraction/specelab.cmi extraction/specelab.cmx
+MYCMX=extraction/utils.cmx extraction/rdtspec.cmx extraction/rdtextract.cmx \
+			extraction/speclang.cmx extraction/light_env.cmx extraction/specelab.cmx
+
 q6.byte: $(ALLOBJS)
 	$(CAMLC) $(LINKFLAGS) -custom -o q6.byte str.cma unix.cma nums.cma $(ALLOBJS)
 
-q6.opt: $(ALLOBJS:.cmo=.cmx)
-	$(CAMLOPT) $(LINKFLAGS) -o q6.opt str.cmxa unix.cmxa nums.cmxa $(ALLOBJS:.cmo=.cmx)
+q6.opt: $(ALLOBJS:.cmo=.cmx) $(MYFILES) $(COMP:.cmo=.cmx)
+	$(CAMLOPT) $(LINKFLAGS) -o q6.opt str.cmxa unix.cmxa nums.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
 
 reconfigure:
 	./configure $(CONFIGURE_ARGS)
