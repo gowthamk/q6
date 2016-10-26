@@ -97,7 +97,6 @@ let do_new_tweet uid str =
   let fids = List.concat @@ List.map 
                (function (User.AddFollower {follower_id}) -> [follower_id]
                   | _ -> []) ctxt in
-
   let tweet_id = Uuid.create() in
     begin
       Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});

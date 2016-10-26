@@ -84,8 +84,13 @@ let implementation ppf sourcefile outputprefix =
                    then Some (Rdtextract.doIt ppf typedtree) 
                    else None in
     let _ = Printf.printf "RDT spec extracted\n" in
-    let _ = match rdt_spec with | None -> None
+    let env = match rdt_spec with | None -> None
       | Some spec -> Some (Specelab.doIt spec) in
+    let _ = match (rdt_spec,env) with 
+      | (Some rdt_spec, Some (ke,te,ve)) -> 
+          let open Specverify in 
+            Some (doIt {ke;te;ve} rdt_spec [])
+      | _ -> None  in
       if !Clflags.print_types then begin
         Warnings.check_fatal ();
         Stypes.dump (Some (outputprefix ^ ".annot"))

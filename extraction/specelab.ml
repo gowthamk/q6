@@ -57,11 +57,17 @@ let mk_cons (Effcons.T {name; args_t}) schemas : Cons.t =
     Cons.T {name=name; recognizer=recognizer; args=args}
 
 let extract_oper_kind schemas = 
-  let eff_cons_in_ts (ts) : Cons.t list =
+  let doIt_schema (tt,ts) : Cons.t list =
     let Tableschema.T {eff_t=Efftyp.T conss} = ts in
-      List.map (fun cons -> mk_cons cons schemas) conss in
+    let rename_as_oper_cons (Effcons.T x) = 
+      let prefix = Tabletype.to_string tt in
+      let name = Id.to_string @@ x.name in
+      let new_name = prefix^"."^name in
+        Effcons.T {x with name = Id.from_string new_name} in
+    let conss' = List.map rename_as_oper_cons conss in
+      List.map (fun cons -> mk_cons cons schemas) conss' in
   let all_cons = List.concat @@ 
-                  List.map (eff_cons_in_ts << snd) schemas in
+                  List.map doIt_schema schemas in
     Kind.Variant all_cons
 
 let bootstrap_KE schemas = 

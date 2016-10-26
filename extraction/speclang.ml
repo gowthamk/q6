@@ -38,7 +38,7 @@ end
 module SymbolicVal = 
 struct
   type t = Bot
-    | Var of Ident.t
+    | Id of Ident.t
     | App of Ident.t * typed list
     | Eq of typed * typed
     | GEq of typed * typed
@@ -52,6 +52,7 @@ struct
               typed option (* unmanifest suffix *)
     | ITE of typed * typed * typed
     | Closure of ((Ident.t * Type.t) -> typed)
+    | Construct of (Ident.t * typed) list
  and typed = t * Type.t
 end
 
@@ -68,4 +69,6 @@ struct
     | Trivial of Type.t
 
   let trivial_arrow (ty1,ty2) = Trivial (Type.Arrow (ty1,ty2))
+
+  let trivial t = Trivial t
 end

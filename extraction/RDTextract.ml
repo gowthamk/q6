@@ -141,13 +141,13 @@ let rec (uncurry_arrow : type_desc -> (type_desc list * type_desc)) = function
         end
   | _ -> failwith "uncurry_arrow called on non-arrow type"
 
-let rec extract_lambda ({c_lhs; c_rhs}) : (Id.t list * expression_desc)= 
+let rec extract_lambda ({c_lhs; c_rhs}) : (Id.t list * expression)= 
   let open Asttypes in
   match (c_lhs.pat_desc, c_rhs.exp_desc) with
     | (Tpat_var (_,loc), Texp_function (_,[case],_)) -> 
         let (args,body) = extract_lambda case in
           ((Id.from_string loc.txt)::args,body)
-    | (Tpat_var (_,loc), body) -> ([Id.from_string loc.txt], body)
+    | (Tpat_var (_,loc), _) -> ([Id.from_string loc.txt], c_rhs)
     | _ -> failwith "Unimpl."
 
 let extract_funs (str_items) = 

@@ -37,7 +37,7 @@ struct
   type t = T of {name: Id.t; 
                  args_t: (Id.t * type_desc) list; 
                  res_t: type_desc;
-                 body: expression_desc}
+                 body: expression}
   let make ~name ~args_t ~res_t ~body = 
     T {name=name; args_t=args_t; res_t=res_t; body=body}
 end
