@@ -1,3 +1,4 @@
+open Types
 open Typedtree
 
 module Type = 
@@ -28,21 +29,44 @@ struct
                  args: (Ident.t * Type.t) list}
 end
 
+module Fun = 
+struct
+  type t = T of {name: Ident.t; 
+                 args_t: (Ident.t * type_desc) list; 
+                 res_t: type_desc;
+                 body: expression}
+  let make ~name ~args_t ~res_t ~body = 
+    T {name=name; args_t=args_t; res_t=res_t; body=body}
+end
+
 module Kind = 
 struct
  type t = Uninterpreted 
         | Variant of Cons.t list (* Cons.t includes a recognizer *)
         | Extendible of Ident.t list ref
+        | Alias of Type.t
+
+  let to_string = function Uninterpreted -> "Uninterpreted type"
+    | Variant cons_list -> 
+        let cons_names = List.map 
+                           (fun (Cons.T {name}) -> Ident.name name)
+                           cons_list in
+          "Variant ["^(String.concat "," cons_names)^"]"
+    | Extendible ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) !ids in
+          "Extendible ["^(String.concat "," id_names)^"]"
+    | Alias typ -> "Alias of "^(Type.to_string typ)
 end
 
 module SymbolicVal = 
 struct
   type t = Bot
-    | Id of Ident.t
+    | Var of Ident.t
     | App of Ident.t * typed list
     | Eq of typed * typed
-    | GEq of typed * typed
-    | LEq of typed * typed
+    | GT of typed * typed
+    | LT of typed * typed
     | Not of typed
     | And of typed list
     | ConstInt of int
@@ -51,24 +75,17 @@ struct
     | List of typed list (* manifest prefix *) * 
               typed option (* unmanifest suffix *)
     | ITE of typed * typed * typed
-    | Closure of ((Ident.t * Type.t) -> typed)
-    | Construct of (Ident.t * typed) list
+    | Fun of Fun.t
+    | EffCons of Cons.t
+    | NewEff of Cons.t * (Ident.t * typed) list
  and typed = t * Type.t
+
+  let rec to_string x = " ... "
 end
 
-module Refinement =
+module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
+    | If of t * t 
     | Forall of ((Ident.t * Type.t) list -> t)
-end
-
-module RefinementType = 
-struct
-  type t = Base of Ident.t * Type.t * Refinement.t
-    | Arrow of (Ident.t * t) * t
-    | Trivial of Type.t
-
-  let trivial_arrow (ty1,ty2) = Trivial (Type.Arrow (ty1,ty2))
-
-  let trivial t = Trivial t
 end

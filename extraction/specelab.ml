@@ -24,20 +24,32 @@
  * itself a constant, the function must also return an update KE.t with UUID
  * type updated to include the new constant. 
  *)
+(*
+ * Effect Ids can have various types, e.g, UUID or string. 
+ * But we need id types of various effects to match in order
+ * to define sameobj as equality of ids. We overcome the problem 
+ * by defining one uninterpreted Id type, and then defining a 
+ * seperate mkKey function for each type to convert to Id type. 
+ * For instance, mkKey_string converts strings to Ids. All mkKey 
+ * functions come with an axiom that if x!=y, then mkKey(x)!=mkKey(y).
+ *)
 open Rdtspec
 open Speclang
-module RefTy = RefinementType
+module SV = SymbolicVal
 
-module KE = Light_env.Make(struct type t = Kind.t end)
-module TE = Light_env.Make(struct type t = RefinementType.t end)
-module VE = Light_env.Make(struct type t = SymbolicVal.t end)
+module KE = Light_env.Make(struct include Kind end)
+module TE = Light_env.Make(struct include Type end)
+module VE = Light_env.Make(struct include SymbolicVal end)
 
 let (<<) f g x = f(g x)
 
 let rec type_of_coltype coltype schemas = 
   let coltype_of_id tt = 
-    let Tableschema.T {id_t} = List.assoc tt schemas in
-      id_t in
+    let (_,Tableschema.T {id_t}) = 
+      try List.find (fun (tt',ts) -> Ident.equal tt tt') schemas 
+      with Not_found -> failwith @@ (Ident.name tt)
+                          ^" not found in schemas"
+    in id_t in
   let f x = type_of_coltype x schemas in
     match coltype with 
       | Coltype.Int -> Type.Int
@@ -47,85 +59,102 @@ let rec type_of_coltype coltype schemas =
       | Coltype.Fkey tt -> f @@ coltype_of_id tt
 
 let mk_cons (Effcons.T {name; args_t}) schemas : Cons.t = 
-  let str = Id.to_string name in
-  let name = Ident.create str  in
-  let recognizer = Ident.create @@ "is"^str in
+  let recognizer = Ident.create @@ "is"^(Ident.name name) in
   let args = List.map 
-               (fun (id,colty) -> (Ident.create @@ Id.to_string id,
-                                   type_of_coltype colty schemas))
+               (fun (id,colty) -> (id, type_of_coltype colty schemas))
                args_t in
     Cons.T {name=name; recognizer=recognizer; args=args}
 
-let extract_oper_kind schemas = 
-  let doIt_schema (tt,ts) : Cons.t list =
-    let Tableschema.T {eff_t=Efftyp.T conss} = ts in
-    let rename_as_oper_cons (Effcons.T x) = 
-      let prefix = Tabletype.to_string tt in
-      let name = Id.to_string @@ x.name in
-      let new_name = prefix^"."^name in
-        Effcons.T {x with name = Id.from_string new_name} in
-    let conss' = List.map rename_as_oper_cons conss in
-      List.map (fun cons -> mk_cons cons schemas) conss' in
+let extract_oper_cons (schemas) : (Ident.t * Cons.t) list = 
+  let doIt_schema (tname,ts) =
+    let Tableschema.T {eff_cons} = ts in
+    let doIt_eff_cons (Effcons.T x) = 
+      let prefix = Ident.name tname in
+      let suffix = Ident.name x.name in
+      let alias = Ident.create @@ prefix^"."^suffix in
+      let new_name = Ident.create @@ prefix^"_"^suffix in
+      let new_cons = Effcons.T {x with name = new_name} in
+        (alias, mk_cons new_cons schemas) in
+      List.map doIt_eff_cons eff_cons in
   let all_cons = List.concat @@ 
                   List.map doIt_schema schemas in
-    Kind.Variant all_cons
+    all_cons
 
-let bootstrap_KE schemas = 
-  let table_types = List.map fst schemas in
-  let id_of_tt tt = Id.from_string @@ Tabletype.to_string tt in
+let bootstrap schemas = 
+  (* 1. ObjType typedef to KE *)
+  let table_names = List.map fst schemas in
   let add_ObjType = 
     let all_cons = List.map 
-                  (fun tt -> mk_cons 
-                              (Effcons.T {name=id_of_tt tt;
-                                          args_t=[]}) schemas) table_types in
+                     (fun table_name -> mk_cons 
+                              (Effcons.T {name=table_name;
+                                          args_t=[]}) schemas) 
+                     table_names in
       KE.add (Ident.create "ObjType") (Kind.Variant all_cons) in
-  (*
-   * Effect Ids can have various types, e.g, UUID or string. 
-   * But we need id types of various effects to match in order
-   * to define sameobj as equality of ids. We overcome the problem 
-   * by defining one uninterpreted Id type, and then defining a 
-   * seperate mkKey function for each type to convert to Id type. 
-   * For instance, mkKey_string converts strings to Ids. All mkKey 
-   * functions come with an axiom that if x!=y, then mkKey(x)!=mkKey(y).
-   *)
+  (* 2. Id typedef to KE *)
   let add_Id = KE.add (Ident.create "Id") Kind.Uninterpreted in
-  let add_Oper = KE.add (Ident.create "Oper") @@
-                  extract_oper_kind schemas in
-    List.fold_left (fun ke f -> f ke) KE.empty
-      (* 
-       * Type Eff is special; it will be defined when K is set.
-       *)
-      [add_ObjType; add_Id; add_Oper]
-
-let bootstrap_TE schemas = 
-  (*
-   * All standard functions and relations will be defined in 
-   * z3encode. We will only define application-specific ones here.
-   *)
-  (* 1. mkKey functions*)
-  let id_types = List.map 
-                   (fun (_,Tableschema.T {id_t}) -> 
-                      type_of_coltype id_t schemas) schemas in
+  let _ = Printf.printf "Id type...\n" in
+  (* 3. Oper typedef to KE *)
+  let aliased_oper_cons = extract_oper_cons schemas in
+  let _ = Printf.printf "aliased_oper_cons ...\n" in
+  let (_,oper_cons) = List.split aliased_oper_cons in
+  let add_Oper = KE.add (Ident.create "Oper") 
+                   (Kind.Variant oper_cons) in
+  (* 4. Qualified effcons aliases to VE *)
+  (* eg: "User.Add" :-> SV.EffCons (Cons.T {name="User_Add", ...}) *)
+  let add_effcons_aliases ve = List.fold_left 
+             (fun ve (alias,cons) -> 
+                VE.add alias (SV.EffCons cons) ve) 
+             ve aliased_oper_cons in
+  let _ = Printf.printf "Effcons aliases ...\n" in
+  (* 5. Oper constructor recognizers to TE *)
+  (* eg: "isUser_Add" :-> Type.oper -> Type.Bool *)
+  let add_Oper_recognizers te = 
+    List.fold_left 
+      (fun te (Cons.T {recognizer}) -> 
+         let typ = Type.Arrow (Type.oper,Type.Bool) in 
+           TE.add recognizer typ te) 
+      te oper_cons in
+  (* 6. Eff attribute accessors to TE *)
+  (* eg: "user_name" :-> Type.eff -> Type.String *)
+  let typed_accessors_of (Cons.T {args}) = 
+    List.map (fun (id,typ) -> 
+                (id, Type.Arrow (Type.eff,typ))) args in
+  let accessors = List.concat @@ List.map 
+                                   typed_accessors_of oper_cons in
+  let add_Eff_accessors te = List.fold_left 
+                           (fun te (id,refty) -> TE.add id refty te)
+                           te accessors in
+  (* 7. Qualified id type aliases to KE *)
+  (* eg: User.id :-> Type.UUID *)
+  let aliased_id_types = List.map 
+                   (fun (tname,Tableschema.T {id_t}) -> 
+                      let alias = Ident.create @@ 
+                                    (Ident.name tname)^".id" in
+                      let id_typ = type_of_coltype id_t schemas in
+                        (alias,id_typ)) schemas in
+  let add_Id_aliases te = List.fold_left 
+                               (fun te (alias,typ) -> 
+                                  KE.add alias (Kind.Alias typ) te)
+                               te aliased_id_types in
+  (* 8. mkKey functions to TE *)
+  let (_,id_types) = List.split aliased_id_types in
   let add_mkKey_for_type te typ = 
-    let refTy = RefTy.trivial_arrow (typ, Type.id) in
+    let refTy = Type.Arrow (typ, Type.id) in
     let id = Ident.create @@ "mkKey_"^(Type.to_string typ) in
       TE.add id refTy te in
   let add_mkKeys te = List.fold_left add_mkKey_for_type te id_types in
-  (* 2. Effect argument accessors *)
-  let all_eff_cons = match extract_oper_kind schemas with 
-    | Kind.Variant c -> c | _ -> failwith "Impossible" in
-  let doIt_eff_cons (Cons.T {args}) = 
-    List.map (fun (id,typ) -> 
-                (id,RefTy.trivial_arrow (Type.eff,typ))) args in
-  let accessors = List.concat @@ List.map doIt_eff_cons all_eff_cons in
-  let add_accessors te = List.fold_left 
-                           (fun te (id,refty) -> TE.add id refty te)
-                           te accessors in
-    List.fold_left (fun te f -> f te) TE.empty
-      [add_mkKeys; add_accessors]
+  
+  (* bootstrap KE *)
+  let ke = List.fold_left (fun ke f -> f ke) KE.empty
+      [add_ObjType; add_Id; add_Id_aliases; add_Oper] in
+  (* bootstrap TE *)
+  let te = List.fold_left (fun te f -> f te) TE.empty
+      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys] in
+  (* bootstrap VE *)
+  let ve = List.fold_left (fun ve f -> f ve) VE.empty
+      [add_effcons_aliases] in
+    (ke,te,ve)
 
 let doIt (Rdtspec.T {schemas}) = 
-  let ke = bootstrap_KE schemas in
-  let te = bootstrap_TE schemas in
-  let ve = VE.empty in
+  let (ke,te,ve) = bootstrap schemas in
     (ke,te,ve)

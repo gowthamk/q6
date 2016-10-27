@@ -10,8 +10,12 @@ sig
   val fold_name: (Ident.t -> elem -> 'b -> 'b) -> t -> 'b -> 'b
   val fold_all: (Ident.t -> elem -> 'b -> 'b) -> t -> 'b -> 'b
   val iter: (Ident.t -> elem -> unit) -> t -> unit
+  val print : t -> unit
 end
-module Make : functor(Val: sig type t end) -> LIGHT_ENV with type elem = Val.t
+module Make : functor(Val: sig 
+                        type t 
+                        val to_string : t -> string
+                      end) -> LIGHT_ENV with type elem = Val.t
 
 
 

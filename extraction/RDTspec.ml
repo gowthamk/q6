@@ -1,48 +1,25 @@
 open Types
 open Typedtree
-
-module Id = 
-struct
-  type t = T of string
-  let to_string (T s) = s
-  let from_string s = T s
-end 
-module Tabletype = Id
+open Speclang
 
 module Coltype = 
 struct
-  type t = Fkey of Tabletype.t | UUID | String | Int | Bool
+  type t = Fkey of Ident.t | UUID | String | Int | Bool
 end
 module Effcons = 
 struct
-  type t = T of {name: Id.t; args_t: (Id.t*Coltype.t) list}
+  type t = T of {name: Ident.t; args_t: (Ident.t*Coltype.t) list}
   let make ~name ~args_t = T {name=name; args_t=args_t}
-end
-
-module Efftyp = 
-struct
-  type t = T of Effcons.t list
-  let make effconss = T effconss
 end
 
 module Tableschema = 
 struct
   type t = T of {id_t : Coltype.t;
-                 eff_t : Efftyp.t}
-  let make ~id_t ~eff_t = T {id_t=id_t; eff_t=eff_t}
+                 eff_cons : Effcons.t list}
+  let make ~id_t ~eff_t = T {id_t=id_t; eff_cons=eff_t}
 end
 
-module Fun = 
-struct
-  type t = T of {name: Id.t; 
-                 args_t: (Id.t * type_desc) list; 
-                 res_t: type_desc;
-                 body: expression}
-  let make ~name ~args_t ~res_t ~body = 
-    T {name=name; args_t=args_t; res_t=res_t; body=body}
-end
-
-type t = T of {schemas: (Tabletype.t * Tableschema.t) list;
+type t = T of {schemas: (Ident.t * Tableschema.t) list;
                reads: Fun.t list; 
                writes : Fun.t list; 
                aux: Fun.t list}

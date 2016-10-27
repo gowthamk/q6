@@ -2,6 +2,7 @@ open Types
 open Typedtree
 open Rdtspec
 open Utils
+open Speclang
 
 (* 
  * Extract module paths of TABLE_TYPE signature for which a 
@@ -50,7 +51,7 @@ let rec extract_ttype_mods ttype_names str_items =
         List.map (fun item -> 
                     doIt_item_desc item.str_desc) str_items
 
-let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr) 
+let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr) 
       : Tableschema.t = 
   let rec doIt_core_type_desc (ctyp_desc) : Coltype.t = 
     match ctyp_desc with
@@ -58,8 +59,8 @@ let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr)
           let path_str = Printtyp.string_of_path path in
           (* let _ = Printf.printf "path: %s\n" path_str in *)
           let coltype_of_str str = match Str.split (Str.regexp "\.") path_str with
-            | ["id"] -> Coltype.Fkey mod_typ
-            | [table_name;"id"] -> Coltype.Fkey (Tabletype.from_string table_name)
+            | ["id"] -> Coltype.Fkey mod_name
+            | [table_name;"id"] -> Coltype.Fkey (Ident.create table_name)
             | _ -> failwith ("coltype_of_str ("^str^"): Unimpl.") in
             begin
               match path_str with 
@@ -70,14 +71,15 @@ let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr)
       | Ttyp_poly (_,core_t) -> doIt_core_type_desc core_t.ctyp_desc
       | _ -> failwith "doIt_label_dec: Unimpl." in
       
-  let doIt_label_dec ({ld_name; ld_type = {ctyp_desc}}) : (Id.t*Coltype.t) = 
-    let arg_id = let open Asttypes in Id.from_string ld_name.txt in
-    (* let _ = Printf.printf "arg_id: %s\n" @@ Id.to_string arg_id in *)
+  let doIt_label_dec ({ld_name; ld_type = {ctyp_desc}}) 
+        : (Ident.t*Coltype.t) = 
+    let arg_id = let open Asttypes in Ident.create ld_name.txt in
+    (* let _ = Printf.printf "arg_id: %s\n" @@ Ident.name arg_id in *)
     let arg_t = doIt_core_type_desc ctyp_desc in
        (arg_id,arg_t) in
   let doIt_cons_decl {cd_name; cd_args} = 
-    let name = let open Asttypes in Id.from_string cd_name.txt in
-    let _ = Printf.printf "constr: %s\n" @@ Id.to_string name in
+    let name = let open Asttypes in Ident.create cd_name.txt in
+    let _ = Printf.printf "constr: %s\n" @@ Ident.name name in
     let label_decs = match cd_args with 
       | Cstr_record d -> d
       | Cstr_tuple [] -> []
@@ -99,9 +101,7 @@ let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr)
               | Pident id when (Ident.name id = "bool") -> Coltype.Bool 
               | Pident id -> failwith @@ "Unknown id type: "^(Ident.name id)
               | Pdot (Pident id,"t",_) when (Ident.name id = "Uuid") -> Coltype.UUID
-              | Pdot (Pident id,"id",_) -> 
-                  let tt = Tabletype.from_string @@ Ident.name id in
-                    Coltype.Fkey tt
+              | Pdot (Pident id,"id",_) -> Coltype.Fkey id
               | p -> failwith @@ 
                         "Invalid id type: "^(Printtyp.string_of_path p) in
               [id_t]
@@ -114,8 +114,7 @@ let schema_of_mod ppf (mod_typ: Tabletype.t) (mod_exp :Typedtree.module_expr)
               | Ttype_variant c -> c 
               | _ -> failwith "Efftype kind has to be a variant" in
             let effconss = List.map doIt_cons_decl cons_decls in
-            let efftyp = Efftyp.make effconss in
-              [efftyp]
+              [effconss]
         | _ -> [] in
   let doIt_item_desc f = function 
       Tstr_type (_,type_decls) -> List.concat @@ List.map f type_decls
@@ -141,13 +140,13 @@ let rec (uncurry_arrow : type_desc -> (type_desc list * type_desc)) = function
         end
   | _ -> failwith "uncurry_arrow called on non-arrow type"
 
-let rec extract_lambda ({c_lhs; c_rhs}) : (Id.t list * expression)= 
+let rec extract_lambda ({c_lhs; c_rhs}) : (Ident.t list * expression)= 
   let open Asttypes in
   match (c_lhs.pat_desc, c_rhs.exp_desc) with
     | (Tpat_var (_,loc), Texp_function (_,[case],_)) -> 
         let (args,body) = extract_lambda case in
-          ((Id.from_string loc.txt)::args,body)
-    | (Tpat_var (_,loc), _) -> ([Id.from_string loc.txt], c_rhs)
+          ((Ident.create loc.txt)::args,body)
+    | (Tpat_var (_,loc), _) -> ([Ident.create loc.txt], c_rhs)
     | _ -> failwith "Unimpl."
 
 let extract_funs (str_items) = 
@@ -161,7 +160,7 @@ let extract_funs (str_items) =
             let open Types in
             let arrow_t = vb_expr.exp_type.desc in
             let (arg_ts,res_t) = uncurry_arrow arrow_t in
-              Fun.make ~name: (Id.from_string loc.txt) 
+              Fun.make ~name: (Ident.create loc.txt) 
                 ~args_t: (List.zip args arg_ts) ~res_t: res_t ~body: body in
             if String.length loc.txt >= 4 && 
                Str.string_before loc.txt 4 = "get_" then
@@ -190,9 +189,9 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
   let ttype_mods = extract_ttype_mods ttype_names str_items in
   let ttype_schemas = List.map 
                         (fun (name,mod_exp) -> 
-                           let typ = Tabletype.from_string name in
-                           let schema = schema_of_mod ppf typ mod_exp in
-                            (typ, schema)) 
+                           let mod_name = Ident.create name in
+                           let schema = schema_of_mod ppf mod_name mod_exp in
+                            (mod_name, schema)) 
                         ttype_mods in
   let (reads,writes,aux) = extract_funs str_items in
   let print_fname (name,expr) = Printf.printf "%s\n" name in
