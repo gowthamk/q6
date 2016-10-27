@@ -63,6 +63,10 @@ struct
   include Store_interface.Make(Userline)
 end
 
+let do_test1 (y:int) = 
+  let x = [1;2] in
+    x
+
 let do_add_user name pwd = 
   let uid = Uuid.create() in
   begin

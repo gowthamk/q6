@@ -5,10 +5,11 @@ module Type =
 struct
   type t = Any | Int | Bool | String | Other of Ident.t
     | Arrow of t*t | List of t | Pair of t*t
-    | Option of t
+    | Option of t | Unit
 
   let rec to_string = function Any -> "any"
-    | Int -> "int" | Bool -> "bool" | String -> "string"
+    | Int -> "int" | Bool -> "bool" 
+    | String -> "string" | Unit -> "unit"
     | Other id -> Ident.name id
     | Arrow (t1,t2) -> (to_string t1)^" -> "^(to_string t2)
     | List t -> (to_string t)^" list"
@@ -63,24 +64,53 @@ module SymbolicVal =
 struct
   type t = Bot
     | Var of Ident.t
-    | App of Ident.t * typed list
-    | Eq of typed * typed
-    | GT of typed * typed
-    | LT of typed * typed
-    | Not of typed
-    | And of typed list
+    | App of Ident.t * t list
+    | Eq of t * t
+    | GT of t * t
+    | LT of t * t
+    | Not of t
+    | And of t list
+    | Or of t list
     | ConstInt of int
     | ConstBool of bool
     | ConstString of string
-    | List of typed list (* manifest prefix *) * 
-              typed option (* unmanifest suffix *)
-    | ITE of typed * typed * typed
+    | List of t list (* manifest prefix *) * 
+              t option (* unmanifest suffix *)
+    | Option of t option
+    | ITE of t * t * t
     | Fun of Fun.t
     | EffCons of Cons.t
-    | NewEff of Cons.t * (Ident.t * typed) list
- and typed = t * Type.t
+    | NewEff of Cons.t * (Ident.t * t) list
 
-  let rec to_string x = " ... "
+  let rec to_string x =
+    let f = to_string in
+    let g x = "("^(f x)^")" in
+      match x with
+        | Var id -> Ident.name id
+        | App (id,svs) -> (Ident.name id)^"("
+            ^(String.concat "," @@ List.map f svs)^")"
+        | Eq (sv1,sv2) -> (f sv1)^" = "^(f sv2)
+        | GT (sv1,sv2) -> (f sv1)^" > "^(f sv2)
+        | LT (sv1,sv2) -> (f sv1)^" < "^(f sv2)
+        | Not sv -> "~("^(f sv)^")"
+        | And svs -> "("^(String.concat " && " @@ List.map f svs)^")"
+        | Or svs -> "("^(String.concat " || " @@ List.map f svs)^")"
+        | ConstInt i -> string_of_int i
+        | ConstBool b -> string_of_bool b
+        | List (svs,s) -> (String.concat "::" @@ List.map f svs)
+            ^(match s with | None -> "" | Some sv -> "::"^(f sv))
+        | Option None -> "None" 
+        | Option (Some sv) -> "Some "^(g sv)
+        | ITE (grd,sv1,sv2) -> (g grd)^"?"^(g sv1)^":"^(g sv2)
+        | Fun (Fun.T {name}) -> "Fun "^(Ident.name name)
+        | EffCons (Cons.T {name}) -> "Cons "^(Ident.name name)
+        | NewEff _ -> "new eff"
+
+
+  let nil = List ([],None)
+
+  let cons = function (x, List (xs,s)) -> List (x::xs,s)
+    | (x, s) -> List ([x],Some s)
 end
 
 module Predicate =

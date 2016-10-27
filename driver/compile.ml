@@ -98,11 +98,11 @@ let implementation ppf sourcefile outputprefix =
               VE.print ve;
             end 
       | _ -> ()  in
-    (*let _ = match (rdt_spec,env) with 
+    let _ = match (rdt_spec,env) with 
       | (Some rdt_spec, Some (ke,te,ve)) -> 
           let open Specverify in 
-            Some (doIt {ke;te;ve} rdt_spec [])
-      | _ -> None  in*)
+            Some (doIt {ke;te;ve;pe=[]} rdt_spec [])
+      | _ -> None  in
       if !Clflags.print_types then begin
         Warnings.check_fatal ();
         Stypes.dump (Some (outputprefix ^ ".annot"))

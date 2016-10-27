@@ -143,11 +143,15 @@ let rec (uncurry_arrow : type_desc -> (type_desc list * type_desc)) = function
 let rec extract_lambda ({c_lhs; c_rhs}) : (Ident.t list * expression)= 
   let open Asttypes in
   match (c_lhs.pat_desc, c_rhs.exp_desc) with
-    | (Tpat_var (_,loc), Texp_function (_,[case],_)) -> 
+    | (Tpat_var (id,loc), Texp_function (_,[case],_)) -> 
         let (args,body) = extract_lambda case in
-          ((Ident.create loc.txt)::args,body)
-    | (Tpat_var (_,loc), _) -> ([Ident.create loc.txt], c_rhs)
-    | _ -> failwith "Unimpl."
+          (id::args,body)
+    | (Tpat_var (id,loc), _) -> ([id], c_rhs)
+    | (Tpat_alias (_,id,_), Texp_function (_,[case],_) ) -> 
+        let (args,body) = extract_lambda case in
+          (id::args,body)
+    | (Tpat_alias (_,id,loc), _) -> ([id], c_rhs)
+    | _ -> failwith "Unimpl. Rdtextract.extract_lambda"
 
 let extract_funs (str_items) = 
   let (reads, writes, aux) = (ref [], ref [], ref []) in
