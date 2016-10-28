@@ -74,13 +74,15 @@ struct
     | ConstInt of int
     | ConstBool of bool
     | ConstString of string
+    | ConstUnit
     | List of t list (* manifest prefix *) * 
               t option (* unmanifest suffix *)
     | Option of t option
     | ITE of t * t * t
     | Fun of Fun.t
+    | Record of (Ident.t * t) list
     | EffCons of Cons.t
-    | NewEff of Cons.t * (Ident.t * t) list
+    | NewEff of Cons.t * t option
 
   let rec to_string x =
     let f = to_string in
@@ -97,25 +99,43 @@ struct
         | Or svs -> "("^(String.concat " || " @@ List.map f svs)^")"
         | ConstInt i -> string_of_int i
         | ConstBool b -> string_of_bool b
+        | ConstString s -> s
+        | ConstUnit -> "()"
         | List (svs,s) -> (String.concat "::" @@ List.map f svs)
             ^(match s with | None -> "" | Some sv -> "::"^(f sv))
         | Option None -> "None" 
         | Option (Some sv) -> "Some "^(g sv)
         | ITE (grd,sv1,sv2) -> (g grd)^"?"^(g sv1)^":"^(g sv2)
         | Fun (Fun.T {name}) -> "Fun "^(Ident.name name)
+        | Record flds -> "{"^(String.concat "; " @@ 
+                List.map 
+                  (fun (id,sv) -> (Ident.name id)^" = "^(f sv)) flds)^"}"
         | EffCons (Cons.T {name}) -> "Cons "^(Ident.name name)
-        | NewEff _ -> "new eff"
+        | NewEff (Cons.T {name},None) -> Ident.name name 
+        | NewEff (Cons.T {name},Some sv) -> (Ident.name name)^(g sv)
 
 
   let nil = List ([],None)
 
   let cons = function (x, List (xs,s)) -> List (x::xs,s)
     | (x, s) -> List ([x],Some s)
+
+  let none = Option None
+
+  let some x = Option (Some x)
 end
 
 module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
-    | If of t * t 
+    | If of SymbolicVal.t * SymbolicVal.t 
     | Forall of ((Ident.t * Type.t) list -> t)
+
+  let of_sv sv = BoolExpr sv
+
+  module SV = SymbolicVal
+
+  let to_string = function BoolExpr sv -> SV.to_string sv
+    | If (sv1,sv2) -> (SV.to_string sv1)^" => "^(SV.to_string sv2)
+    | _ -> failwith "P.to_string Unimpl."
 end

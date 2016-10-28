@@ -63,9 +63,18 @@ struct
   include Store_interface.Make(Userline)
 end
 
-let do_test1 (y:int) = 
+
+(*
+ * There is a zip/map2 bug unfixed. Fix goes in mkfun 
+ * inside rdtextract.ml
+ *) 
+let do_test1 uid name = 
   let x = [1;2] in
-    x
+  let y = UserName.GetId in
+  let z = UserName.Add {user_id=uid} in
+  let u1 = UserName_table.append name z in
+  let u2 = UserName_table.get name y in
+    u2
 
 let do_add_user name pwd = 
   let uid = Uuid.create() in
