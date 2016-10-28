@@ -1,4 +1,30 @@
 open Q6_interface
+
+module List = 
+struct
+  open List
+  let rec map f l = match l with
+    | [] -> []
+    | x::xs -> (f x)::(map f xs)
+
+  let rec append l1 l2 = match l1 with
+    | [] -> l2
+    | x::xs -> x::(append xs l2)
+
+  let rec concat ls = match ls with
+    | [] -> []
+    | l::rest -> append l (concat rest)
+
+  let rec fold_left f b l = match l with
+    | [] -> b
+    | x::xs -> fold_left f (f b x) xs
+
+  let rec iter f l = match l with
+    | [] -> ()
+    | x::xs -> (f x; iter f xs)
+end
+
+
 module User = 
 struct
   type id = Uuid.t
@@ -74,6 +100,10 @@ let do_test1 uid name =
   let z = UserName.Add {user_id=uid} in
   let u1 = UserName_table.append name z in
   let u2 = UserName_table.get name y in
+  let u3 = List.map 
+             (function eff -> match eff with
+                | UserName.Add {user_id=uid'} -> Some uid'
+                | _ -> None) u2 in
     u2
 
 let do_add_user name pwd = 

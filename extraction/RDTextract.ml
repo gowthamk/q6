@@ -130,42 +130,21 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
                     str_items in 
     Tableschema.make ~id_t: id_t ~eff_t:eff_t
 
-let rec (uncurry_arrow : type_desc -> (type_desc list * type_desc)) = function 
-    (Tarrow (_,typ_expr1,typ_expr2,_)) ->
-      let (ty1,ty2) = (typ_expr1.desc, typ_expr2.desc) in 
-        begin
-          match ty2 with 
-              Tarrow _ -> (fun (x,y) -> (ty1::x,y)) (uncurry_arrow ty2)
-            | _ -> ([ty1],ty2)
-        end
-  | _ -> failwith "uncurry_arrow called on non-arrow type"
-
-let rec extract_lambda ({c_lhs; c_rhs}) : (Ident.t list * expression)= 
-  let open Asttypes in
-  match (c_lhs.pat_desc, c_rhs.exp_desc) with
-    | (Tpat_var (id,loc), Texp_function (_,[case],_)) -> 
-        let (args,body) = extract_lambda case in
-          (id::args,body)
-    | (Tpat_var (id,loc), _) -> ([id], c_rhs)
-    | (Tpat_alias (_,id,_), Texp_function (_,[case],_) ) -> 
-        let (args,body) = extract_lambda case in
-          (id::args,body)
-    | (Tpat_alias (_,id,loc), _) -> ([id], c_rhs)
-    | _ -> failwith "Unimpl. Rdtextract.extract_lambda"
-
 let extract_funs (str_items) = 
   let (reads, writes, aux) = (ref [], ref [], ref []) in
   let open Asttypes in
-  let doIt_valbind {vb_pat; vb_expr} = 
+  let doIt_valbind rec_flag {vb_pat; vb_expr} = 
     match (vb_pat.pat_desc, vb_expr.exp_desc) with 
       | (Tpat_var (_,loc), Texp_function (_,[case],_)) -> 
           let mk_fun () = 
-            let (args,body) = extract_lambda case in
+            let (args,body) = Misc.extract_lambda case in
             let open Types in
             let arrow_t = vb_expr.exp_type.desc in
-            let (arg_ts,res_t) = uncurry_arrow arrow_t in
+            let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
               Fun.make ~name: (Ident.create loc.txt) 
-                ~args_t: (List.zip args arg_ts) ~res_t: res_t ~body: body in
+                   ~rec_flag: rec_flag
+                   ~args_t: (List.zip args arg_ts) 
+                   ~res_t: res_t ~body: body in
             if String.length loc.txt >= 4 && 
                Str.string_before loc.txt 4 = "get_" then
               reads := (mk_fun ())::!reads
@@ -176,11 +155,32 @@ let extract_funs (str_items) =
       | _ -> () in
     begin
       List.iter (fun {str_desc} -> match str_desc with
-                   | Tstr_value (_,valbinds) -> 
-                       List.iter doIt_valbind valbinds
+                   | Tstr_value (rec_flag,valbinds) -> 
+                       let open Asttypes in 
+                       let rec_flag = match rec_flag with 
+                         | Nonrecursive -> false
+                         | Recursive -> true in
+                         List.iter (doIt_valbind rec_flag) valbinds
                    | _ -> ()) str_items;
       (!reads, !writes, !aux)
     end
+
+let extract_aux_mods str_items ttype_names = 
+  let is_table_mod name = 
+    let tokens = Str.split (Str.regexp "_") name in
+      (List.length tokens >= 2) && (List.hd (List.rev tokens) = "table") in
+  let is_ttype_mod name = List.mem name ttype_names in
+  let doIt_item_desc = function 
+      Tstr_module mod_bind ->
+        let name = let open Asttypes in mod_bind.mb_name.txt in
+        let this_mod = mod_bind.mb_expr in
+          if is_table_mod name || is_ttype_mod name 
+          then []
+          else [(name,this_mod)]
+    | _ -> [] in
+      List.concat @@ 
+        List.map (fun item -> 
+                    doIt_item_desc item.str_desc) str_items
 
 let doIt ppf ({str_items; str_type; str_final_env}) = 
   let ttype_paths = extract_ttype_paths str_items in
@@ -198,9 +198,27 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
                             (mod_name, schema)) 
                         ttype_mods in
   let (reads,writes,aux) = extract_funs str_items in
+  let aux_mods = extract_aux_mods str_items ttype_names in
+  let _ = List.iter (fun (name,_) -> Printf.printf "%s is aux mod\n" name)
+            aux_mods in
+  let new_aux = 
+    List.concat @@ List.map
+       (fun (mod_name,mod_exp) -> 
+          let str_items = match mod_exp.mod_desc with 
+            | Tmod_structure struc -> struc.str_items
+            | _ -> failwith "Aux mod isn't a structure" in
+          let rename_fun (Fun.T fun_t) =  
+            Fun.T {fun_t with name = Ident.create @@ 
+                              mod_name^"."^(Ident.name fun_t.name)} in
+          let (x,y,z) = extract_funs str_items in
+          let new_funs = List.map rename_fun (x @ y @ z) in
+            new_funs) aux_mods in
+  let _ = List.iter
+            (fun (Fun.T fun_t) -> Printf.printf "%s is an aux fun\n" 
+                                    (Ident.name fun_t.name)) new_aux in
   let print_fname (name,expr) = Printf.printf "%s\n" name in
   let rdt_spec = Rdtspec.make ~schemas: ttype_schemas ~reads: reads
-                   ~writes:writes ~aux:aux in
+                   ~writes:writes ~aux:(aux @ new_aux) in
     begin
       rdt_spec
      (* print_string "Reads:\n";

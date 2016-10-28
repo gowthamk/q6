@@ -33,11 +33,16 @@ end
 module Fun = 
 struct
   type t = T of {name: Ident.t; 
+                 rec_flag: bool;
                  args_t: (Ident.t * type_desc) list; 
                  res_t: type_desc;
                  body: expression}
-  let make ~name ~args_t ~res_t ~body = 
-    T {name=name; args_t=args_t; res_t=res_t; body=body}
+
+  let anonymous = Ident.create ""
+
+  let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
+    T {name=name; rec_flag=rec_flag; args_t=args_t; 
+       res_t=res_t; body=body}
 end
 
 module Kind = 
@@ -79,7 +84,7 @@ struct
               t option (* unmanifest suffix *)
     | Option of t option
     | ITE of t * t * t
-    | Fun of Fun.t
+    | Fun of Fun.t (* No closures. Only functions. *)
     | Record of (Ident.t * t) list
     | EffCons of Cons.t
     | NewEff of Cons.t * t option
@@ -138,4 +143,32 @@ struct
   let to_string = function BoolExpr sv -> SV.to_string sv
     | If (sv1,sv2) -> (SV.to_string sv1)^" => "^(SV.to_string sv2)
     | _ -> failwith "P.to_string Unimpl."
+end
+
+module Misc =
+struct
+
+  let rec uncurry_arrow = function 
+    (Tarrow (_,typ_expr1,typ_expr2,_)) ->
+      let (ty1,ty2) = (typ_expr1.desc, typ_expr2.desc) in 
+        begin
+          match ty2 with 
+              Tarrow _ -> (fun (x,y) -> (ty1::x,y)) (uncurry_arrow ty2)
+            | _ -> ([ty1],ty2)
+        end
+  | Tlink typ_expr -> uncurry_arrow @@ typ_expr.desc
+  | _ -> failwith "uncurry_arrow called on non-arrow type"
+
+  let rec extract_lambda ({c_lhs; c_rhs}) : (Ident.t list * expression)= 
+  let open Asttypes in
+  match (c_lhs.pat_desc, c_rhs.exp_desc) with
+    | (Tpat_var (id,loc), Texp_function (_,[case],_)) -> 
+        let (args,body) = extract_lambda case in
+          (id::args,body)
+    | (Tpat_var (id,loc), _) -> ([id], c_rhs)
+    | (Tpat_alias (_,id,_), Texp_function (_,[case],_) ) -> 
+        let (args,body) = extract_lambda case in
+          (id::args,body)
+    | (Tpat_alias (_,id,loc), _) -> ([id], c_rhs)
+    | _ -> failwith "Unimpl. Specverify.extract_lambda"
 end

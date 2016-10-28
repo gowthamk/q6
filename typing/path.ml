@@ -64,6 +64,11 @@ let rec last = function
   | Pdot(_, s, _) -> s
   | Papply(_, p) -> last p
 
+let rec all_names = function
+  | Pident id -> [Ident.name id]
+  | Pdot (p,s,_) -> (all_names p) @ [s]
+  | Papply (p1,p2) -> (all_names p1) @ (all_names p2)
+
 let is_uident s =
   assert (s <> "");
   match s.[0] with

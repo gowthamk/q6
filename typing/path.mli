@@ -32,6 +32,8 @@ val head: t -> Ident.t
 
 val heads: t -> Ident.t list
 
+val all_names: t-> string list
+
 val last: t -> string
 
 type typath =

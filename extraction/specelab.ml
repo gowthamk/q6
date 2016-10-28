@@ -80,7 +80,7 @@ let extract_oper_cons (schemas) : (Ident.t * Cons.t) list =
                   List.map doIt_schema schemas in
     all_cons
 
-let bootstrap schemas = 
+let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) = 
   (* 1. ObjType typedef to KE *)
   let table_names = List.map fst schemas in
   let add_ObjType = 
@@ -126,6 +126,7 @@ let bootstrap schemas =
                            te accessors in
   (* 7. Qualified id type aliases to KE *)
   (* eg: User.id :-> Type.UUID *)
+  (* TODO: Qualified eff type aliases to KE *)
   let aliased_id_types = List.map 
                    (fun (tname,Tableschema.T {id_t}) -> 
                       let alias = Ident.create @@ 
@@ -143,6 +144,11 @@ let bootstrap schemas =
     let id = Ident.create @@ "mkKey_"^(Type.to_string typ) in
       TE.add id refTy te in
   let add_mkKeys te = List.fold_left add_mkKey_for_type te id_types in
+  (* 9. Add all funs to VE *)
+  let add_funs ve = List.fold_left 
+                      (fun ve (Fun.T {name} as fun_t) -> 
+                        VE.add name (SV.Fun fun_t) ve) 
+                      ve (reads @ writes @ aux) in
   
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
@@ -152,9 +158,9 @@ let bootstrap schemas =
       [add_Oper_recognizers; add_Eff_accessors; add_mkKeys] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
-      [add_effcons_aliases] in
+      [add_effcons_aliases; add_funs] in
     (ke,te,ve)
 
-let doIt (Rdtspec.T {schemas}) = 
-  let (ke,te,ve) = bootstrap schemas in
+let doIt rdt_spec = 
+  let (ke,te,ve) = bootstrap rdt_spec in
     (ke,te,ve)

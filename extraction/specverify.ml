@@ -141,6 +141,11 @@ let doIt_get env typed_sv1 sv2 =
                         Some (SV.Var l)) in
     (ret_sv,env')
 
+let doIt_fun_app env (Fun.T fun_t) arg_svs =
+  let _ = if List.length fun_t.args_t = List.length arg_svs then ()
+          else failwith "Partial application unimpl."  in
+    failwith "doIt_fun_app: Unimpl."
+
 let rec doIt_expr env (expr:Typedtree.expression) 
       : SV.t * env * vc_t list = 
   let open Path in
@@ -157,13 +162,14 @@ let rec doIt_expr env (expr:Typedtree.expression)
       (List.length tokens >= 2) && (List.hd (List.rev tokens) = "table") in
   match expr.exp_desc with
     (* id *)
-    | Texp_ident (Pident id,_,_) -> 
-        let name = Ident.name id in
+    | Texp_ident (path,_,_) -> 
+        let names = Path.all_names path in
+        let name = String.concat "." names in
           begin
             try ret (VE.find_name name env.ve)
             with Not_found -> 
               try let _ = TE.find_name name env.te in 
-                ret (SV.Var id)
+                ret (SV.Var (Ident.create name))
               with Not_found -> failwith @@ name^" not found\n"
           end
     (* constant *)
@@ -244,6 +250,17 @@ let rec doIt_expr env (expr:Typedtree.expression)
         let typ1 = type_of_tyd env.ke e1.exp_type.desc in
         let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
           (effs_sv, env'', vcs)
+    (* f e *) (* (\x.e) e *)
+    | Texp_apply (e1, largs) -> 
+        let (sv1,env',vcs1) = doIt_expr env e1 in
+        let e2s = map_snd_opts largs in
+        let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
+        let (res_sv, res_env, res_vcs) = match sv1 with
+          | SV.Var id -> (SV.App (id,sv2s), env'', vcs1 @ vcs2)
+          | SV.Fun fun_t -> (fun (x,y,vcs3) -> (x,y,vcs1 @ vcs2 @ vcs3))
+                                (doIt_fun_app env'' fun_t sv2s) 
+          | _ -> failwith "Texp_apply: Unexpected" in
+          (res_sv, res_env, res_vcs)
     (* let id = e1 in e2 *)
     | Texp_let (Asttypes.Nonrecursive, 
                 [{vb_pat={pat_desc=Tpat_var (lhs_id,_)};vb_expr=e1}], e2) -> 
@@ -251,11 +268,25 @@ let rec doIt_expr env (expr:Typedtree.expression)
         let ve' = VE.add lhs_id sv1 env'.ve in
         let (sv2,env'',vcs2) = doIt_expr {env' with ve=ve'} e2 in
           (sv2,env'',vcs1 @ vcs2)
+    (* \x.e *)
+    | Texp_function (_,[case],_) -> 
+        let (args,body) = Misc.extract_lambda case in
+        let open Types in
+        let arrow_t = expr.exp_type.desc in
+        (*let _ = Printtyp.type_expr Format.std_formatter 
+                      expr.exp_type in *)
+        let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
+        let (fun_t:Fun.t) = Fun.make ~rec_flag: false
+                            ~args_t: (List.zip args arg_ts) 
+                            ~res_t: res_t ~body: body 
+                            (* This is default, yet doesn't 
+                             * compile if removed. Fixit. *)
+                            ~name: Fun.anonymous in
+          ret @@ SV.Fun fun_t
+    | Texp_function (_,cases,_) -> 
+        failwith "Lambdas with multiple cases unimpl."
     | _ -> failwith "Unimpl. expr"
 
-(*
- * doIt_fun : env -> 
- *)
 let doIt_fun (env: env) (Fun.T {args_t;body}) =
   let args_tys = 
     List.map (fun (id,tyd) -> (id, type_of_tyd env.ke tyd)) 
