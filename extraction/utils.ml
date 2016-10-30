@@ -4,6 +4,7 @@ sig
   val zip : 'a list -> 'b list -> ('a * 'b) list
   val map_fold_left: ('b -> 'a -> ('c*'b)) -> 'b -> 'a list -> ('c list * 'b)
   val tabulate : int -> (int -> 'a) -> 'a list 
+  val last : 'a list -> 'a
 end =
 struct
   include List
@@ -19,4 +20,6 @@ struct
   let tabulate n f = 
     let l = Array.to_list @@ Array.make n () in
       List.mapi (fun i _ -> f i) l
+
+  let last l = List.hd @@ List.rev l
 end

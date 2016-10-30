@@ -26,19 +26,30 @@ let (<+>) env res = {env with te=TE.merge env.te res.new_te;
  *)
 let k =ref 2 (* will be overridden in doIt *)
 
-let rec type_of_tyd ke tyd = 
+let rec type_of_tye ke (tye : type_expr) = 
   let open Path in
   let open Types in
-  let f = type_of_tyd ke in
-    match tyd with
-      | Tarrow (_,te1,te2,_) -> Type.Arrow (f te1.desc, f te2.desc)
-      | Ttuple [te1;te2] -> Type.Pair (f te1.desc, f te2.desc)
+  let f = type_of_tye ke in
+    match tye.desc with
+      | Tvar aop -> 
+        let a_name = Misc.mk_tvar_name aop tye.id in
+        let not_found () =
+          begin
+            Printf.printf "Kind of %s not found" a_name; 
+            raise Not_found
+          end in
+        let knd = try KE.find_name a_name ke 
+                  with Not_found -> not_found () in
+          (match knd with | Kind.Alias typ -> typ
+            | _ -> failwith "type_of_tye: Unexpected")
+      | Tarrow (_,te1,te2,_) -> Type.Arrow (f te1, f te2)
+      | Ttuple [te1;te2] -> Type.Pair (f te1, f te2)
       | Tconstr (Pdot (Pident id,"t",_),[te],_) 
-        when (Ident.name id = "List") -> Type.List (f te.desc)
+        when (Ident.name id = "List") -> Type.List (f te)
       | Tconstr (Pident id,[te],_) 
-        when (Ident.name id = "list") -> Type.List (f te.desc)
+        when (Ident.name id = "list") -> Type.List (f te)
       | Tconstr (Pident id,[te],_) 
-        when (Ident.name id = "option") -> Type.Option (f te.desc)
+        when (Ident.name id = "option") -> Type.Option (f te)
       | Tconstr (Pident id,[],_) 
         when (Ident.name id = "string") -> Type.String
       | Tconstr (Pident id,[],_) 
@@ -49,21 +60,33 @@ let rec type_of_tyd ke tyd =
         when (Ident.name id = "unit") -> Type.Unit
       | Tconstr (Pdot (Pident id,"t",_),[],_) 
         when (Ident.name id = "Uuid") -> Type.uuid
+      | Tconstr (Pdot (Pident id,"eff",l),[],s) ->
+          (* If there exists an id type for this module, 
+           * then this must be a TABLE_TYPE module.  *)
+          begin
+            try f {desc=Tconstr (Pdot (Pident id,"id",l),[],s);
+                   id=tye.id; level=tye.level} 
+            with Not_found -> failwith "Unknown eff type";
+            Type.oper
+          end
       | Tconstr (Pdot (Pident id,t,_),[],_)  ->
           let alias = (Ident.name id)^"."^t in
           let Kind.Alias typ = try KE.find_name alias ke 
                     with Not_found -> 
-                      failwith @@ "Type "^alias^" unknown\n" in
+                      begin
+                        print_string ("Type "^alias^" unknown\n");
+                        raise Not_found
+                      end in
             typ
-      | Tlink te -> f te.desc
+      | Tlink te -> f te
       | Tconstr (Pdot (Pident id,s,_),[],_)  ->
           let _ = Printf.printf "Unknown Tconstr %s.%s\n" 
                     (Ident.name id) s in
-          let _ = Printtyp.type_expr ppf {desc=tyd; level=0; id=0} in
+          let _ = Printtyp.type_expr ppf tye  in
             failwith "Unimpl."
       | _ -> 
           let _ = Printf.printf "Unknown type\n" in
-          let _ = Printtyp.type_expr ppf {desc=tyd; level=0; id=0} in
+          let _ = Printtyp.type_expr ppf tye in
             failwith "Unimpl."
 
 let map_snd_opts = List.map (function (_,Some x) -> x
@@ -141,12 +164,48 @@ let doIt_get env typed_sv1 sv2 =
                         Some (SV.Var l)) in
     (ret_sv,env')
 
-let doIt_fun_app env (Fun.T fun_t) arg_svs =
+let rec doIt_fun_app env (Fun.T fun_t) tydbinds arg_svs =
   let _ = if List.length fun_t.args_t = List.length arg_svs then ()
           else failwith "Partial application unimpl."  in
-    failwith "doIt_fun_app: Unimpl."
+  (*
+   * (KE['a -> T], TE, PE, VE[x -> v2] | e --> v <| (TE',PE',C)
+   * --------------------------------------------------------
+   *    (KE, TE, PE, VE) |- (\x.e) T v2 --> v <| (TE',PE',C)
+   *
+   * The nature of symbolic execution guarantees that T is always a 
+   * concrete type, and v2 and v are symbolic values.
+   *)
+  let typbinds = List.map (fun (a,tyd) -> 
+                             (Ident.create a, 
+                              Kind.Alias (type_of_tye env.ke @@ 
+                                          Misc.to_tye tyd)))
+                   tydbinds in
+  let bind_typs ke = List.fold_left 
+                       (fun ke (a,typ) -> KE.add a typ ke)
+                       ke typbinds in
+  let argbinds = List.map2 (fun (arg,_) sv -> (arg,sv)) 
+                   fun_t.args_t arg_svs in
+  let bind_args ve = List.fold_left 
+                       (fun ve (arg,sv) -> VE.add arg sv ve) 
+                       ve argbinds in
+  let bind_self ve =
+    (* Rec function M.f is referred as f in its body *)
+    let qualif_name = Ident.name fun_t.name in
+    let unqualif_name = List.last @@ 
+                          Str.split (Str.regexp ".") qualif_name in
+      VE.add (Ident.create unqualif_name) (SV.Fun (Fun.T fun_t)) ve in
+  let xke = List.fold_left (fun ke f -> f ke) env.ke
+              [bind_typs] in
+  let xve = List.fold_left (fun ve f -> f ve) env.ve
+              [bind_args; if fun_t.rec_flag then bind_self 
+                          else (fun ve -> ve)] in
+  let xenv = {env with ke=xke; ve=xve} in
+  let (body_sv,xenv',vcs) = doIt_expr xenv fun_t.body in 
+  (* restore original KE and VE *)
+  let env' = {xenv' with ke=env.ke; ve=env.ve} in
+    (body_sv, env', vcs)
 
-let rec doIt_expr env (expr:Typedtree.expression) 
+and doIt_expr env (expr:Typedtree.expression) 
       : SV.t * env * vc_t list = 
   let open Path in
   let ret sv = (sv, env, []) in
@@ -238,7 +297,7 @@ let rec doIt_expr env (expr:Typedtree.expression)
                    (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
         let _ = Printf.printf "processing append...\n" in
         let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
-        let typ1 = type_of_tyd env.ke e1.exp_type.desc in
+        let typ1 = type_of_tye env.ke e1.exp_type in
         let env'' = doIt_append env' (sv1,typ1) sv2 in
           (SV.ConstUnit, env'', vcs)
     (* Obj_table.get e1 e2 *)
@@ -247,18 +306,33 @@ let rec doIt_expr env (expr:Typedtree.expression)
                    (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
         let _ = Printf.printf "processing get...\n" in
         let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
-        let typ1 = type_of_tyd env.ke e1.exp_type.desc in
+        let typ1 = type_of_tye env.ke e1.exp_type in
         let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
           (effs_sv, env'', vcs)
     (* f e *) (* (\x.e) e *)
     | Texp_apply (e1, largs) -> 
+        let strf = Format.str_formatter in
+        let _ = Format.fprintf strf "The type of fn being applied:\n" in
+        let _  = Printtyp.type_expr strf e1.exp_type in
+        let _ = Printf.printf "%s\n" @@ Format.flush_str_formatter () in
         let (sv1,env',vcs1) = doIt_expr env e1 in
         let e2s = map_snd_opts largs in
         let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
         let (res_sv, res_env, res_vcs) = match sv1 with
           | SV.Var id -> (SV.App (id,sv2s), env'', vcs1 @ vcs2)
-          | SV.Fun fun_t -> (fun (x,y,vcs3) -> (x,y,vcs1 @ vcs2 @ vcs3))
-                                (doIt_fun_app env'' fun_t sv2s) 
+          | SV.Fun (Fun.T fun_t) -> 
+              (*
+               * OCaml has no explicit type applications. We reconstruct
+               * type arguments by unifying function type with function
+               * expression type.
+               *)
+              let arrow_tye = Misc.to_tye @@ 
+                              Misc.curry (List.map snd fun_t.args_t)
+                                 fun_t.res_t in
+              let tyd_binds = Misc.unify_tyes arrow_tye e1.exp_type in
+              let (res_sv, res_env, vcs3) = 
+                    doIt_fun_app env'' (Fun.T fun_t) tyd_binds sv2s in
+                (res_sv, res_env, vcs1 @ vcs2 @ vcs3)
           | _ -> failwith "Texp_apply: Unexpected" in
           (res_sv, res_env, res_vcs)
     (* let id = e1 in e2 *)
@@ -284,12 +358,30 @@ let rec doIt_expr env (expr:Typedtree.expression)
                             ~name: Fun.anonymous in
           ret @@ SV.Fun fun_t
     | Texp_function (_,cases,_) -> 
-        failwith "Lambdas with multiple cases unimpl."
+        failwith "Lambdas with multiple cases Unimpl."
+    | Texp_match (scrutinee,cases,[],_) ->
+        let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
+        let exptyp = type_of_tye env.ke expr.exp_type in
+        let _ = Printf.printf "Type of the match expression:\n" in
+        let _ = Printf.printf "%s\n" @@ Type.to_string exptyp in
+        let (sv,env'',vcs2)  = let open SV in match scru_sv with
+          | List ([],Some l) -> 
+              (* create a fresh var of expr type and return *)
+              failwith "Unimpl."
+          | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
+          | _ -> failwith "Texp_match Unimpl." in
+          (sv,env'',vcs1 @ vcs2)
+    | Texp_match (_,_,ex_cases,_) -> 
+        failwith "Match expressions with exception cases Unimpl."
     | _ -> failwith "Unimpl. expr"
 
+and doIt_list_cases env (conc,abs) cases = 
+  failwith "doIt_list_cases: Unimpl."
+
 let doIt_fun (env: env) (Fun.T {args_t;body}) =
-  let args_tys = 
-    List.map (fun (id,tyd) -> (id, type_of_tyd env.ke tyd)) 
+  let (args_tys : (Ident.t * Type.t) list)= 
+    List.map (fun (id,tyd) -> 
+                (id, type_of_tye env.ke (Misc.to_tye tyd))) 
       args_t in
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
