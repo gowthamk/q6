@@ -26,6 +26,8 @@ let (<+>) env res = {env with te=TE.merge env.te res.new_te;
  *)
 let k =ref 2 (* will be overridden in doIt *)
 
+  let not_found msg = (Printf.printf "%s\n" msg; raise Not_found)
+
 let rec type_of_tye ke (tye : type_expr) = 
   let open Path in
   let open Types in
@@ -33,13 +35,9 @@ let rec type_of_tye ke (tye : type_expr) =
     match tye.desc with
       | Tvar aop -> 
         let a_name = Misc.mk_tvar_name aop tye.id in
-        let not_found () =
-          begin
-            Printf.printf "Kind of %s not found" a_name; 
-            raise Not_found
-          end in
+        let msg = "Kind of %s not found" in
         let knd = try KE.find_name a_name ke 
-                  with Not_found -> not_found () in
+                  with Not_found -> not_found msg in
           (match knd with | Kind.Alias typ -> typ
             | _ -> failwith "type_of_tye: Unexpected")
       | Tarrow (_,te1,te2,_) -> Type.Arrow (f te1, f te2)
@@ -73,10 +71,7 @@ let rec type_of_tye ke (tye : type_expr) =
           let alias = (Ident.name id)^"."^t in
           let Kind.Alias typ = try KE.find_name alias ke 
                     with Not_found -> 
-                      begin
-                        print_string ("Type "^alias^" unknown\n");
-                        raise Not_found
-                      end in
+                      not_found ("Type "^alias^" unknown\n") in
             typ
       | Tlink te -> f te
       | Tconstr (Pdot (Pident id,s,_),[],_)  ->
@@ -164,7 +159,7 @@ let doIt_get env typed_sv1 sv2 =
                         Some (SV.Var l)) in
     (ret_sv,env')
 
-let rec doIt_fun_app env (Fun.T fun_t) tydbinds arg_svs =
+let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let _ = if List.length fun_t.args_t = List.length arg_svs then ()
           else failwith "Partial application unimpl."  in
   (*
@@ -175,11 +170,10 @@ let rec doIt_fun_app env (Fun.T fun_t) tydbinds arg_svs =
    * The nature of symbolic execution guarantees that T is always a 
    * concrete type, and v2 and v are symbolic values.
    *)
-  let typbinds = List.map (fun (a,tyd) -> 
+  let typbinds = List.map (fun (a,tye) -> 
                              (Ident.create a, 
-                              Kind.Alias (type_of_tye env.ke @@ 
-                                          Misc.to_tye tyd)))
-                   tydbinds in
+                              Kind.Alias (type_of_tye env.ke tye)))
+                   tyebinds in
   let bind_typs ke = List.fold_left 
                        (fun ke (a,typ) -> KE.add a typ ke)
                        ke typbinds in
@@ -191,8 +185,10 @@ let rec doIt_fun_app env (Fun.T fun_t) tydbinds arg_svs =
   let bind_self ve =
     (* Rec function M.f is referred as f in its body *)
     let qualif_name = Ident.name fun_t.name in
+    let _ = Printf.printf "Before last. Qualif:%s\n" qualif_name in
     let unqualif_name = List.last @@ 
-                          Str.split (Str.regexp ".") qualif_name in
+                          Str.split (Str.regexp "\.") qualif_name in
+    let _ = print_string "After last\n" in
       VE.add (Ident.create unqualif_name) (SV.Fun (Fun.T fun_t)) ve in
   let xke = List.fold_left (fun ke f -> f ke) env.ke
               [bind_typs] in
@@ -203,11 +199,13 @@ let rec doIt_fun_app env (Fun.T fun_t) tydbinds arg_svs =
   let (body_sv,xenv',vcs) = doIt_expr xenv fun_t.body in 
   (* restore original KE and VE *)
   let env' = {xenv' with ke=env.ke; ve=env.ve} in
+  let _ = print_string "fun app is done\n" in
     (body_sv, env', vcs)
 
 and doIt_expr env (expr:Typedtree.expression) 
       : SV.t * env * vc_t list = 
   let open Path in
+  (* let _ = Printtyped.expression 0 (Format.std_formatter) expr in*)
   let ret sv = (sv, env, []) in
   let doIt_exprs env exprs = 
     let (svs, (env',vcs)) = List.map_fold_left 
@@ -329,16 +327,20 @@ and doIt_expr env (expr:Typedtree.expression)
               let arrow_tye = Misc.to_tye @@ 
                               Misc.curry (List.map snd fun_t.args_t)
                                  fun_t.res_t in
-              let tyd_binds = Misc.unify_tyes arrow_tye e1.exp_type in
+              let tye_binds = Misc.unify_tyes arrow_tye e1.exp_type in
               let (res_sv, res_env, vcs3) = 
-                    doIt_fun_app env'' (Fun.T fun_t) tyd_binds sv2s in
+                    doIt_fun_app env'' (Fun.T fun_t) tye_binds sv2s in
                 (res_sv, res_env, vcs1 @ vcs2 @ vcs3)
           | _ -> failwith "Texp_apply: Unexpected" in
           (res_sv, res_env, res_vcs)
     (* let id = e1 in e2 *)
-    | Texp_let (Asttypes.Nonrecursive, 
-                [{vb_pat={pat_desc=Tpat_var (lhs_id,_)};vb_expr=e1}], e2) -> 
+    | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_var (lhs_id,_)};
+                           vb_expr=e1}], e2) -> 
         let (sv1,env',vcs1) = doIt_expr env e1 in
+        let sv1 = match (ast_rec, sv1) with 
+          | (Asttypes.Recursive, SV.Fun (Fun.T fun_t)) -> 
+              SV.Fun (Fun.T {fun_t with rec_flag=true})
+          | _ -> sv1 in
         let ve' = VE.add lhs_id sv1 env'.ve in
         let (sv2,env'',vcs2) = doIt_expr {env' with ve=ve'} e2 in
           (sv2,env'',vcs1 @ vcs2)
@@ -362,21 +364,165 @@ and doIt_expr env (expr:Typedtree.expression)
     | Texp_match (scrutinee,cases,[],_) ->
         let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
         let exptyp = type_of_tye env.ke expr.exp_type in
+        let scrutyp = type_of_tye env.ke scrutinee.exp_type in
         let _ = Printf.printf "Type of the match expression:\n" in
         let _ = Printf.printf "%s\n" @@ Type.to_string exptyp in
         let (sv,env'',vcs2)  = let open SV in match scru_sv with
           | List ([],Some l) -> 
-              (* create a fresh var of expr type and return *)
-              failwith "Unimpl."
+              let _ = print_string "unmanifest during match\n" in
+              let x = Ident.create @@ fresh_name () in
+              let xte = TE.add x exptyp env'.te in
+                (SV.Var x, {env' with te=xte}, [])
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
+          | NewEff (Cons.T cons_t, argop) -> 
+              failwith "Texp_match NewEff Unimpl."
+          | Var id -> 
+              let name = Ident.name id in
+              let typ = TE.find_name name env.te in
+              let _ = Printf.printf "Scrutinee var: %s:%s\n" 
+                        name (Type.to_string typ) in
+              let _ = if Type.is_eff typ then ()
+                      else failwith "Scrutinee is non-eff var" in
+                doIt_eff_cases env id cases
+          | Option op -> doIt_option_cases env' op cases 
+          | ITE (v1,v2,v3) -> doIt_ite_cases env' (v1,v2,v3) scrutyp cases
+          | Record fields -> 
+              failwith "Texp_match Record Unimpl."
           | _ -> failwith "Texp_match Unimpl." in
           (sv,env'',vcs1 @ vcs2)
     | Texp_match (_,_,ex_cases,_) -> 
         failwith "Match expressions with exception cases Unimpl."
     | _ -> failwith "Unimpl. expr"
 
+  and doIt_ite_cases env (grdsv,tsv,fsv) typ cases = 
+    failwith "doIt_ite_cases: Unimpl."
+
+  and doIt_option_cases env op cases = 
+  let _ = if List.length cases = 2 then ()
+          else failwith "Option pattern match needs 2 cases" in
+  let is_none_pat = function
+      (Tpat_construct (_,{cstr_name},[])) -> cstr_name = "None"
+    | _ -> false in 
+  let is_some_pat = function
+      (Tpat_construct (_,{cstr_name},_)) -> cstr_name = "Some"
+    | _ -> false in 
+  let none_case = try List.find (fun case -> 
+                              is_none_pat case.c_lhs.pat_desc) cases
+                 with Not_found -> not_found "None case not found" in
+  let none_expr = none_case.c_rhs in
+  let some_case = try List.find (fun case -> 
+                              is_some_pat case.c_lhs.pat_desc) cases
+                 with Not_found -> not_found "Some case not found" in
+  let x_var = match some_case.c_lhs.pat_desc with
+      (Tpat_construct (_,_,[{pat_desc = Tpat_var (id,_)}])) -> id
+    | _ -> failwith ":: patterns other than x::xs Unimpl." in
+  let some_expr = some_case.c_rhs in
+  let doIt_some x_sv = 
+    let xve = VE.add x_var x_sv env.ve in
+    let xenv = {env with ve=xve} in
+    let (some_sv,env',vcs) = doIt_expr xenv some_expr in
+      (some_sv, {env' with ve=env.ve}, vcs) in
+    match op with
+      | None -> doIt_expr env none_expr
+      | Some x_sv -> doIt_some x_sv 
+
+and doIt_eff_case env eff = 
+  function {c_lhs = {pat_desc = Tpat_construct (li_loc,cstr_desc,pats)}; 
+            c_rhs = case_expr} ->
+    let li = let open Asttypes in li_loc.txt in
+    let cstr_name = String.concat "." @@ Longident.flatten li in
+    let _ = Printf.printf "doIt_eff_case: cstr_name=%s\n" cstr_name in
+    let cons_sv = try VE.find_name cstr_name env.ve
+                  with Not_found -> not_found "cstr not found" in
+    let Cons.T cons_t = match cons_sv with | SV.EffCons c -> c
+              | _ -> failwith "doIt_eff_case: Unexpected." in
+    let eff_var = SV.Var eff in
+    let grd = let open SV in
+      (* e.g: isUserName_Add(oper(!e2)) *)
+      App (cons_t.recognizer,[App (L.oper,[eff_var])]) in
+    let xve_fld_pat ve fld_id fld_pat = match fld_pat.pat_desc with
+      | Tpat_var (id,_) -> 
+          let sv = SV.App (fld_id,[eff_var]) in
+            VE.add id sv ve
+      | _ -> failwith "Unexpected record fld match" in
+    let xve_fld_pats ve fld_pats = 
+      List.fold_left 
+        (fun ve (_,ld,pat) -> 
+           xve_fld_pat ve (Ident.create ld.lbl_name) pat) 
+        ve fld_pats in
+    let xve = match pats with | [] -> env.ve
+      | [{pat_desc = Tpat_record (fld_pats,_)}] -> 
+            xve_fld_pats env.ve fld_pats 
+      | _ -> failwith "Unexpected EffCons arg match" in
+    let xpe = (P.of_sv grd)::env.pe in
+    let xenv = {env with pe=xpe; ve=xve} in
+    let (case_sv, xenv', vcs) = doIt_expr xenv case_expr in
+    (*
+     * Condition new predicates in PE and restore original VE.
+     *)
+    let pe' = let open List in
+      let old_begin = (length xenv'.pe) - (length xpe) in
+        List.mapi (fun i p -> 
+                     if i<old_begin then P.If (P.of_sv grd, p)
+                     else p) xenv'.pe in
+    let env' = {xenv' with pe=pe'; ve=env.ve}  in
+      ((Some grd,case_sv), env', vcs)
+  | {c_lhs = {pat_desc = Tpat_any}; c_rhs = case_expr} ->
+      let (case_sv, env', vcs) = doIt_expr env case_expr in
+        ((None,case_sv), {env' with ve=env.ve}, vcs)
+  | _ -> failwith "doIt_eff_case: pat-match Unimpl."
+
+and doIt_eff_cases env eff cases = 
+   let (gsvs, (env',vcs)) = List.map_fold_left 
+             (fun (env,vcs) case -> 
+                let (gsv,env',new_vcs) = doIt_eff_case env eff case in 
+                  (gsv,(env',vcs @ new_vcs))) 
+             (env,[]) cases in
+   let (ifes,elsee) = match List.partition 
+                              (function (Some _,_) -> true
+                                 | (None,_) -> false) gsvs with
+     | (ifopes,[(None, elsee)]) -> (List.map 
+                            (fun (xop,y) -> (from_just xop,y)) 
+                            ifopes, 
+                          elsee) 
+     | _ -> failwith "doIt_eff_cases: Unexpected" in
+   let grded_sv = List.fold_right 
+                    (fun (grd,ifee) elsee -> SV.ITE (grd,ifee,elsee))
+                    (ifes : (SV.t*SV.t) list) elsee in
+     (grded_sv, env', vcs)
+
 and doIt_list_cases env (conc,abs) cases = 
-  failwith "doIt_list_cases: Unimpl."
+  let _ = if List.length cases = 2 then ()
+          else failwith "List pattern match needs 2 cases" in
+  let is_nil_pat = function
+      (Tpat_construct (_,{cstr_name},[])) -> cstr_name = "[]"
+    | _ -> false in 
+  let is_cons_pat = function
+      (Tpat_construct (_,{cstr_name},_)) -> cstr_name = "::"
+    | _ -> false in 
+  let nil_case = try List.find (fun case -> 
+                              is_nil_pat case.c_lhs.pat_desc) cases
+                 with Not_found -> not_found "Nil case not found" in
+  let nil_expr = nil_case.c_rhs in
+  let cons_case = try List.find (fun case -> 
+                              is_cons_pat case.c_lhs.pat_desc) cases
+                 with Not_found -> not_found "Cons case not found" in
+  let (x_var,xs_var) = match cons_case.c_lhs.pat_desc with
+      (Tpat_construct (_,_,[{pat_desc = Tpat_var (id1,_)};
+                            {pat_desc = Tpat_var (id2,_)}])) ->
+        (id1, id2)
+    | _ -> failwith ":: patterns other than x::xs Unimpl." in
+  let cons_expr = cons_case.c_rhs in
+  let doIt_cons x_sv xs_sv = 
+    let xve = VE.add  xs_var xs_sv (VE.add x_var x_sv env.ve) in
+    let xenv = {env with ve=xve} in
+    let (cons_sv,env',vcs) = doIt_expr xenv cons_expr in
+    let _ = print_string "Cons case done\n" in
+      (cons_sv, {env' with ve=env.ve}, vcs) in
+    match (conc,abs) with
+      | ([],None) -> doIt_expr env nil_expr
+      | ([],Some l) -> failwith "doIt_list_cases: Unexpected"
+      | (x_sv::conc', _) -> doIt_cons x_sv (SV.List (conc',abs)) 
 
 let doIt_fun (env: env) (Fun.T {args_t;body}) =
   let (args_tys : (Ident.t * Type.t) list)= 

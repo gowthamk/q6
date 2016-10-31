@@ -21,5 +21,12 @@ struct
     let l = Array.to_list @@ Array.make n () in
       List.mapi (fun i _ -> f i) l
 
-  let last l = List.hd @@ List.rev l
+  let hd = function x::xs -> x
+    | [] -> (failwith "hd")
+
+  let last l = hd @@ List.rev l
+
 end
+
+let from_just = function (Some x) -> x
+  | None -> failwith "Expected something. Got nothing."

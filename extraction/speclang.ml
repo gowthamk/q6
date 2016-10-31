@@ -22,6 +22,7 @@ struct
   let uuid = other "UUID"
   let eff = other "Eff"
   let is_oper t = (t = oper)
+  let is_eff t = (t = eff)
 end
 
 module Cons = 
@@ -39,7 +40,7 @@ struct
                  res_t: type_desc;
                  body: expression}
 
-  let anonymous = Ident.create ""
+  let anonymous = Ident.create "<anon>"
 
   let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
     T {name=name; rec_flag=rec_flag; args_t=args_t; 
@@ -108,7 +109,8 @@ struct
         | ConstString s -> s
         | ConstUnit -> "()"
         | List (svs,s) -> (String.concat "::" @@ List.map f svs)
-            ^(match s with | None -> "" | Some sv -> "::"^(f sv))
+            ^(if List.length svs = 0 then "" else "::")
+            ^(match s with | None -> "[]" | Some sv -> f sv)
         | Option None -> "None" 
         | Option (Some sv) -> "Some "^(g sv)
         | ITE (grd,sv1,sv2) -> (g grd)^"?"^(g sv1)^":"^(g sv2)
@@ -134,15 +136,15 @@ end
 module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
-    | If of SymbolicVal.t * SymbolicVal.t 
+    | If of t * t 
     | Forall of ((Ident.t * Type.t) list -> t)
 
   let of_sv sv = BoolExpr sv
 
   module SV = SymbolicVal
 
-  let to_string = function BoolExpr sv -> SV.to_string sv
-    | If (sv1,sv2) -> (SV.to_string sv1)^" => "^(SV.to_string sv2)
+  let rec to_string = function BoolExpr sv -> SV.to_string sv
+    | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | _ -> failwith "P.to_string Unimpl."
 end
 
@@ -203,10 +205,15 @@ struct
       end in
     let assrt b = if b then () else failwith "not unifiable" in
       match (tyd1,tyd2) with
-        | (Tvar aop, _) | (Tunivar aop,_) -> 
+        (* 
+         * One of tye1 and tye2 is a concrete type, but we don't
+         * know which one.
+         *)
+        | (Tvar aop, _) | (Tunivar aop, _) 
+        | (_, Tvar aop) | (_, Tunivar aop) -> 
             let a = mk_tvar_name aop tye1.id in
               if List.mem_assoc a binds then binds 
-              else (a,tyd2)::binds
+              else (a,tye2)::binds
         | (Ttuple [tye1],_) -> unify_tyes binds tye1 tye2
         | (Tarrow (_,tye11,tye12,_), Tarrow (_,tye21,tye22,_)) ->
             unify_tyes (unify_tyes binds tye11 tye21) tye12 tye22
@@ -223,15 +230,15 @@ struct
         | _ -> failwith "unify_tyes: Unimpl."
 
   let unify_tyes tye1 tye2 = 
-    let tydbinds = unify_tyes [] tye1 tye2 in
+    let tyebinds = unify_tyes [] tye1 tye2 in
     (* let strf = Format.str_formatter in
-    let print_bind (a,tyd) = 
+    let print_bind (a,tye) = 
       begin
         Format.fprintf strf "%s :-> " a;
-        Printtyp.type_expr strf @@ to_tye tyd;
+        Printtyp.type_expr strf tye.desc;
         Printf.printf "%s\n" @@ Format.flush_str_formatter ()
       end in
-    let _ = List.iter print_bind tydbinds in *)
-      tydbinds
+    let _ = List.iter print_bind tyebinds in *)
+      tyebinds
 
 end

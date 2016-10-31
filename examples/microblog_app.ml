@@ -7,13 +7,13 @@ struct
     | [] -> []
     | x::xs -> (f x)::(map f xs)
 
-  let rec append l1 l2 = match l1 with
-    | [] -> l2
-    | x::xs -> x::(append xs l2)
-
-  let rec concat ls = match ls with
-    | [] -> []
-    | l::rest -> append l (concat rest)
+  let rec concat ls = 
+    let rec append l1 l2 = match l1 with
+      | [] -> l2
+      | x::xs -> x::(append xs l2) in
+      match ls with
+        | [] -> []
+        | l::rest -> append l (concat rest)
 
   let rec fold_left f b l = match l with
     | [] -> b
@@ -101,10 +101,13 @@ let do_test1 uid name =
   let u1 = UserName_table.append name z in
   let u2 = UserName_table.get name y in
   let u3 = List.map 
-             (function eff -> match eff with
+             (fun eff -> match eff with
                 | UserName.Add {user_id=uid'} -> Some uid'
                 | _ -> None) u2 in
-    u2
+  let u4 = List.fold_left (fun acc idop -> match idop with
+                             | Some uid' -> uid'::acc
+                             | None -> acc) [] u3 in
+    u4
 
 let do_add_user name pwd = 
   let uid = Uuid.create() in
