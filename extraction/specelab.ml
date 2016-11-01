@@ -149,13 +149,22 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
                       (fun ve (Fun.T {name} as fun_t) -> 
                         VE.add name (SV.Fun fun_t) ve) 
                       ve (reads @ writes @ aux) in
-  
+  (* 10. UUID type def to KE *)
+  let add_UUID ke = 
+    KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
+  (* 11. UUID.create to TE *)
+  let add_UUID_create te = 
+    let typ = Type.Arrow (Type.Unit,Type.uuid) in
+    let id = Ident.create "UUID.create" in
+      TE.add id typ te in
+
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
-      [add_ObjType; add_Id; add_Id_aliases; add_Oper] in
+      [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
-      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys] in
+      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys; 
+       add_UUID_create] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs] in

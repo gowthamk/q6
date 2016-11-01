@@ -26,7 +26,24 @@ let (<+>) env res = {env with te=TE.merge env.te res.new_te;
  *)
 let k =ref 2 (* will be overridden in doIt *)
 
-  let not_found msg = (Printf.printf "%s\n" msg; raise Not_found)
+let not_found msg = (Printf.printf "%s\n" msg; raise Not_found)
+
+let is_none_pat = function
+    (Tpat_construct (_,{cstr_name},[])) -> cstr_name = "None"
+  | _ -> false
+
+let is_some_pat = function
+    (Tpat_construct (_,{cstr_name},_)) -> cstr_name = "Some"
+  | _ -> false
+
+let find_none_case cases = try List.find (fun case -> 
+                            is_none_pat case.c_lhs.pat_desc) cases
+                           with Not_found -> not_found "None case not found"
+
+let find_some_case cases = try List.find (fun case -> 
+                            is_some_pat case.c_lhs.pat_desc) cases
+                           with Not_found -> not_found "Some case not found"
+           
 
 let rec type_of_tye ke (tye : type_expr) = 
   let open Path in
@@ -94,6 +111,7 @@ let gen_name name_base =
 
 let fresh_eff_name = gen_name "!e"
 let fresh_name = gen_name "!v"
+let fresh_uuid_name = gen_name "!uuid"
 
 module L = 
 struct
@@ -106,6 +124,9 @@ struct
   let mkkey = function "string" -> mkkey_string
     | "UUID" -> mkkey_UUID
     | _ -> failwith "mkkey not available"
+  let isSome = Ident.create "isSome"
+  let isNone = Ident.create "isNone"
+  let fromJust = Ident.create "fromJust"
 end
 
 module P = Predicate
@@ -174,6 +195,7 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
                              (Ident.create a, 
                               Kind.Alias (type_of_tye env.ke tye)))
                    tyebinds in
+  (* Special casing for symbolic lists *)
   let bind_typs ke = List.fold_left 
                        (fun ke (a,typ) -> KE.add a typ ke)
                        ke typbinds in
@@ -317,6 +339,16 @@ and doIt_expr env (expr:Typedtree.expression)
         let e2s = map_snd_opts largs in
         let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
         let (res_sv, res_env, res_vcs) = match sv1 with
+          | SV.Var id when (Ident.name id = "UUID.create") -> 
+              let new_uuid = Ident.create @@ fresh_uuid_name () in
+              let te' = TE.add new_uuid Type.uuid env.te in
+              let uuids = match KE.find_name "UUID" env.ke with
+                | Kind.Extendible prev -> !prev
+                | _ -> failwith "UUID Unexpected" in
+              let ke' = KE.add (Ident.create "UUID")
+                          (Kind.Extendible (ref @@ new_uuid::uuids))
+                          env.ke in
+                (SV.Var new_uuid, {env with ke=ke';te=te'}, vcs1 @ vcs2)
           | SV.Var id -> (SV.App (id,sv2s), env'', vcs1 @ vcs2)
           | SV.Fun (Fun.T fun_t) -> 
               (*
@@ -394,28 +426,44 @@ and doIt_expr env (expr:Typedtree.expression)
         failwith "Match expressions with exception cases Unimpl."
     | _ -> failwith "Unimpl. expr"
 
-  and doIt_ite_cases env (grdsv,tsv,fsv) typ cases = 
-    failwith "doIt_ite_cases: Unimpl."
+and doIt_ite_cases env (grdsv,tsv,fsv) typ cases = 
+  let scru = SV.ITE (grdsv,tsv,fsv) in
+  let open Type in match typ with
+    | Option _ -> 
+        (* 1. Some case *)
+        let some_grd = let open SV in
+          App (L.isSome,[scru]) in
+        let some_val = let open SV in
+          App (L.fromJust, [scru]) in
+        let xpe = (P.of_sv some_grd)::env.pe in
+        let xenv = {env with pe=xpe} in
+        let (some_sv,xenv',vcs1) = doIt_option_cases xenv 
+                                      (Some some_val) cases in
+        (*
+         * Condition new predicates in PE and restore original VE.
+         *)
+        let new_ps = List.take ((List.length xenv'.pe) - 
+                                (List.length xpe)) xenv'.pe in
+        let pe' = (List.map (fun new_p -> 
+                               P.If (P.of_sv some_grd, new_p)) new_ps)
+                  @ env.pe in
+        let env' = {xenv' with pe=pe'; ve=env.ve}  in
+        (* 2. None case *)
+        let (none_sv,env'',vcs2) = doIt_option_cases env' 
+                                     None cases in
+        let sv = SV.ITE (some_grd, some_sv, none_sv) in
+          (sv, env'', vcs1 @ vcs2)
+    | _ -> failwith "doIt_ite_cases: Unimpl."
 
-  and doIt_option_cases env op cases = 
+and doIt_option_cases env op cases = 
   let _ = if List.length cases = 2 then ()
           else failwith "Option pattern match needs 2 cases" in
-  let is_none_pat = function
-      (Tpat_construct (_,{cstr_name},[])) -> cstr_name = "None"
-    | _ -> false in 
-  let is_some_pat = function
-      (Tpat_construct (_,{cstr_name},_)) -> cstr_name = "Some"
-    | _ -> false in 
-  let none_case = try List.find (fun case -> 
-                              is_none_pat case.c_lhs.pat_desc) cases
-                 with Not_found -> not_found "None case not found" in
+  let none_case = find_none_case cases in
   let none_expr = none_case.c_rhs in
-  let some_case = try List.find (fun case -> 
-                              is_some_pat case.c_lhs.pat_desc) cases
-                 with Not_found -> not_found "Some case not found" in
+  let some_case = find_some_case cases in
   let x_var = match some_case.c_lhs.pat_desc with
       (Tpat_construct (_,_,[{pat_desc = Tpat_var (id,_)}])) -> id
-    | _ -> failwith ":: patterns other than x::xs Unimpl." in
+    | _ -> failwith "Some patterns other than Some x Unimpl." in
   let some_expr = some_case.c_rhs in
   let doIt_some x_sv = 
     let xve = VE.add x_var x_sv env.ve in
@@ -460,11 +508,11 @@ and doIt_eff_case env eff =
     (*
      * Condition new predicates in PE and restore original VE.
      *)
-    let pe' = let open List in
-      let old_begin = (length xenv'.pe) - (length xpe) in
-        List.mapi (fun i p -> 
-                     if i<old_begin then P.If (P.of_sv grd, p)
-                     else p) xenv'.pe in
+    let new_ps = List.take ((List.length xenv'.pe) - 
+                            (List.length xpe)) xenv'.pe in
+    let pe' = (List.map (fun new_p -> 
+                           P.If (P.of_sv grd, new_p)) new_ps)
+              @ env.pe in
     let env' = {xenv' with pe=pe'; ve=env.ve}  in
       ((Some grd,case_sv), env', vcs)
   | {c_lhs = {pat_desc = Tpat_any}; c_rhs = case_expr} ->
@@ -533,12 +581,16 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
               env.te args_tys in
   let (body_sv,env',vcs) = doIt_expr {env with te=te'} body in
     begin
+      Printf.printf "------- Fun done -----\n";
+      TE.print env'.te;
+      List.iter (fun p -> Printf.printf "%s\n" 
+                    @@ P.to_string p) env'.pe;
       Printf.printf "body_sv:\n %s\n" (SV.to_string body_sv);
       failwith "Unimpl. fun"
     end
 
 let doIt env rdt_spec k' = 
-  let _ = k := k' in
+  let _ = k := 10(*k'*) in
   let Rdtspec.T {schemas; reads; writes; aux} = rdt_spec in
   let my_fun = List.find (fun (Fun.T x) -> 
                             Ident.name x.name = "do_test1")

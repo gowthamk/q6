@@ -5,6 +5,7 @@ sig
   val map_fold_left: ('b -> 'a -> ('c*'b)) -> 'b -> 'a list -> ('c list * 'b)
   val tabulate : int -> (int -> 'a) -> 'a list 
   val last : 'a list -> 'a
+  val take : int -> 'a list -> 'a list
 end =
 struct
   include List
@@ -25,6 +26,10 @@ struct
     | [] -> (failwith "hd")
 
   let last l = hd @@ List.rev l
+
+  let rec take n l = match n with
+    | 0 -> []
+    | _ -> (hd l)::(take (n-1) (tl l))
 
 end
 

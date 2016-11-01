@@ -19,6 +19,10 @@ struct
     | [] -> b
     | x::xs -> fold_left f (f b x) xs
 
+  let rec fold_right f l b = match l with
+    | [] -> b
+    | x::xs -> f x (fold_right f xs b)
+
   let rec iter f l = match l with
     | [] -> ()
     | x::xs -> (f x; iter f xs)
@@ -104,9 +108,9 @@ let do_test1 uid name =
              (fun eff -> match eff with
                 | UserName.Add {user_id=uid'} -> Some uid'
                 | _ -> None) u2 in
-  let u4 = List.fold_left (fun acc idop -> match idop with
+  let u4 = List.fold_right (fun idop acc -> match idop with
                              | Some uid' -> uid'::acc
-                             | None -> acc) [] u3 in
+                             | None -> acc) u3 [] in
     u4
 
 let do_add_user name pwd = 
