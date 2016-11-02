@@ -9,20 +9,16 @@ module P = Predicate
 
 exception Inconsistency
 
-type env = {ke:KE.t; te:TE.t; pe: Predicate.t list; ve:VE.t}
+type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
+type env = {ssn: Ident.t; seqno:int; ke:KE.t; 
+            te:TE.t; pe: Predicate.t list; ve:VE.t}
 
+(* Symbolic Trace *)
+type st_t = TE.t * Predicate.t list
+(* Verification Condition *)
 type vc_t = TE.t * Predicate.t list * Predicate.t
 
-(* type lhd = {new_te:TE.t; new_pe: Predicate.t list;  new_vcs: vc_t list} *)
-
 let ppf = Format.std_formatter
-
-(*
-let lhd0 = {new_te = TE.empty; new_pe = []; new_vcs = []}
-
-let (<+>) env res = {env with te=TE.merge env.te res.new_te;
-                              pe = env.pe @ res.new_pe}
-*)
 
 let pervasives = [("Pervasives.@@", "@@"); 
                   ("Pervasives.raise", "raise"); 
@@ -33,6 +29,8 @@ let pervasives = [("Pervasives.@@", "@@");
                   ("Pervasives.>=", ">=");
                   ("Pervasives.<", "<");
                   ("Pervasives.<=", "<=");]
+
+let printf = Printf.printf
 
 (* 
  * OMGWTFBMC bound
@@ -57,6 +55,15 @@ let find_some_case cases = try List.find (fun case ->
                             is_some_pat case.c_lhs.pat_desc) cases
                            with Not_found -> not_found "Some case not found"
            
+
+let (--) te1 te2 = 
+  TE.fold_name 
+      (fun id typ diff_te -> 
+         try (ignore @@ TE.find_name (Ident.name id) te2; 
+              diff_te) 
+         with Not_found -> 
+           TE.add id typ diff_te)
+      te1 TE.empty
 
 let doIt_under_grd env grd doIt = 
   let xpe = (P.of_sv grd)::env.pe in
@@ -149,9 +156,12 @@ let fresh_uuid_name = gen_name "!uuid"
 module L = 
 struct
   let objid = Ident.create "objid"
+  let objtyp = Ident.create "obtyp"
   let oper = Ident.create "oper"
   let vis = Ident.create "vis"
   let so = Ident.create "so"
+  let ssn = Ident.create "ssn"
+  let seqno = Ident.create "seqno"
   let mkkey_string = Ident.create "mkkey_string"
   let mkkey_UUID = Ident.create "mkkey_UUID"
   let mkkey = function "string" -> mkkey_string
@@ -162,7 +172,7 @@ struct
   let fromJust = Ident.create "fromJust"
 end
 
-let mk_new_effect (sv1,ty1) sv2 =
+let mk_new_effect env (sv1,ty1) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
   let sv_y = SV.Var y in
   let (Cons.T cons_t,args) = let open SV in match sv2 with 
@@ -174,21 +184,34 @@ let mk_new_effect (sv1,ty1) sv2 =
                      SV.App (mkkey_ty1, [sv1])) in
   let phi_2 = SV.Eq (SV.App (L.oper, [sv_y]), 
                      SV.Var (cons_t.name)) in
+  let objtyp = Ident.create @@ 
+               match Str.split (Str.regexp "_") 
+                       (Ident.name cons_t.name) with
+                 | x::y::xs -> x
+                 | _ -> failwith "Unexpected form of EffCons name" in
+  let phi_3 = SV.Eq (SV.App (L.objtyp, [sv_y]), 
+                     SV.Var objtyp) in
+  let phi_4 = SV.Eq (SV.App (L.ssn, [sv_y]), 
+                     SV.Var env.ssn) in
+  let phi_5 = SV.Eq (SV.App (L.seqno, [sv_y]), 
+                     SV.ConstInt env.seqno) in
   let doIt_arg (arg_id,arg_sv) = SV.Eq (SV.App (arg_id, [sv_y]), 
                                         arg_sv) in
-  let phis_3 = List.map doIt_arg args in
-  let conj = P.of_sv @@ SV.And (phi_1::phi_2::phis_3) in
+  let phis_6 = List.map doIt_arg args in
+  let conj = P.of_sv @@ SV.And (phi_1::phi_2::phi_3::phi_4
+                                ::phi_5::phis_6) in
   let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in
     (y,conj)
 
 let doIt_append env typed_sv1 sv2 =
-  let (y,conj) = mk_new_effect typed_sv1 sv2 in
+  let (y,conj) = mk_new_effect env typed_sv1 sv2 in
   let te' = TE.add y Type.eff env.te in
-  let pe' = env.pe @ [conj] in
-    {env with te=te'; pe=pe'}
+  let pe' = conj::env.pe in
+  let seqno' = env.seqno + 1 in
+    {env with seqno=seqno';te=te'; pe=pe'}
 
 let doIt_get env typed_sv1 sv2 = 
-  let (y,conj_y) = mk_new_effect typed_sv1 sv2 in
+  let (y,conj_y) = mk_new_effect env typed_sv1 sv2 in
   let ys = List.tabulate !k 
              (fun _ -> Ident.create @@ fresh_eff_name ()) in
   let vis (id1,id2) = SV.App (L.vis, [SV.Var id1;
@@ -205,8 +228,9 @@ let doIt_get env typed_sv1 sv2 =
    *)
   let l = Ident.create @@ fresh_name () in
   let te'' = TE.add l (Type.List Type.eff) te' in
-  let pe' = env.pe @ [conj_y; conj_ys] in
-  let env' = {env with te=te''; pe=pe'} in
+  let pe' = conj_y::conj_ys::env.pe  in
+  let seqno' = env.seqno + 1 in
+  let env' = {env with seqno=seqno'; te=te''; pe=pe'} in
   let ret_sv = SV.List (List.map (fun yi -> SV.Var yi) ys, 
                         Some (SV.Var l)) in
     (ret_sv,env')
@@ -462,10 +486,9 @@ and doIt_expr env (expr:Typedtree.expression)
                       else failwith "Scrutinee is non-eff var" in
                 doIt_eff_cases env id cases
           | Option op -> doIt_option_cases env' op cases 
-          | ITE (v1,v2,v3) -> doIt_ite_cases env' (v1,v2,v3) scrutyp cases
           | Record fields -> 
               failwith "Texp_match Record Unimpl."
-          | _ -> failwith "Texp_match Unimpl." in
+          | _ -> doIt_sv_cases env' scru_sv scrutyp cases in
           (sv,env'',vcs1 @ vcs2)
     | Texp_match (_,_,ex_cases,_) -> 
         failwith "Match expressions with exception cases Unimpl."
@@ -502,8 +525,7 @@ and doIt_expr env (expr:Typedtree.expression)
           (sv, env3, vcs1 @ vcs2 @ vcs3)
     | _ -> failwith "Unimpl. expr"
 
-and doIt_ite_cases env (grdsv,tsv,fsv) typ cases = 
-  let scru = SV.ITE (grdsv,tsv,fsv) in
+and doIt_sv_cases env scru typ cases = 
   let open Type in match typ with
     | Option _ -> 
         (* 1. Some case *)
@@ -517,6 +539,12 @@ and doIt_ite_cases env (grdsv,tsv,fsv) typ cases =
             let doIt env = doIt_option_cases env 
                              (Some some_val) cases in
             let (some_sv,env',vcs1) = doIt_under_grd env some_grd doIt in
+            let _ = 
+              begin
+                printf "doIt_under_grd returned\n";
+                printf "Top pred is:\n %s\n"
+                  (P.to_string @@ List.hd env'.pe)
+              end in 
               (Some some_sv, env', vcs1)
           with Inconsistency ->
             (*
@@ -547,7 +575,8 @@ and doIt_ite_cases env (grdsv,tsv,fsv) typ cases =
           | (None, None) -> (* over to the parent branch*) 
                raise Inconsistency in
           (sv, env'', vcs1 @ vcs2)
-    | _ -> failwith "doIt_ite_cases: Unimpl."
+    | _ -> failwith @@ "doIt_sv_cases Unimpl. for "
+              ^(SV.to_string scru)
 
 and doIt_option_cases env op cases = 
   let _ = if List.length cases = 2 then ()
@@ -675,13 +704,17 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env',vcs) = doIt_expr {env with te=te'} body in
+  let diff_te = env'.te -- env.te in
+  let st = (diff_te, List.rev env'.pe) in
+  let vcs = List.map (fun (te',p1,p2) -> 
+                        (te' -- env.te, p1, p2)) vcs in
     begin
-      Printf.printf "------- Fun done -----\n";
-      (*
-      TE.print env'.te;
+      Printf.printf "------- Symbolic Trace -----\n";
+      printf "let\n";
+      TE.print (fst st);
+      printf "in\n";
       List.iter (fun p -> Printf.printf "%s\n" 
-                    @@ P.to_string p) env'.pe;
-       *)
+                    @@ P.to_string p) (snd st);
       Printf.printf "---- VCs ----\n";
       let print_vc (te,antePs,conseqP) = 
         begin
@@ -697,14 +730,16 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
       failwith "Unimpl. fun"
     end
 
-let doIt env rdt_spec k' = 
-  let _ = k := k' in
+let doIt (ke,te,pe,ve) rdt_spec k' = 
+  let _ = k := 2 (* k'*) in
   let Rdtspec.T {schemas; reads; writes; aux} = rdt_spec in
-  let tmp_name =  "get_user_id_by_name" in
+  let tmp_name =  "get_userline" in
   let my_fun = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name)
                      (writes@reads)
                with Not_found -> not_found @@ tmp_name
                     ^" function not found" in
+  let env = {ssn=Fun.name my_fun; seqno=0; 
+             ke=ke; te=te; pe=pe; ve=ve} in
   let _ = doIt_fun env my_fun in
     failwith "Unimpl. Specverify.doIt"

@@ -152,36 +152,40 @@ let do_block_user me other  =
 
 let do_new_tweet uid str = 
   let ctxt = User_table.get uid (User.GetFollowers) in
-  let fids = List.concat @@ List.map 
-               (function (User.AddFollower {follower_id}) -> [follower_id]
-                  | _ -> []) ctxt in
+  let fids = List.map 
+               (fun eff -> match eff with 
+                  | (User.AddFollower {follower_id=fid}) -> Some fid
+                  | _ -> None) ctxt in
   let tweet_id = Uuid.create() in
     begin
       Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});
       Userline_table.append uid (Userline.NewTweet {tweet_id=tweet_id});
       List.iter 
-        (fun fid -> Timeline_table.append fid 
-                      (Timeline.NewTweet {tweet_id=tweet_id})) fids;
+        (fun fidop -> match fidop with 
+           | Some fid -> Timeline_table.append fid 
+                      (Timeline.NewTweet {tweet_id=tweet_id})
+           | None -> ()) fids;
     end
 
 let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in
-  let tweets = List.concat @@
-                List.map (function (Tweet.New {content}) -> [content]
-                            | _ -> [] ) ctxt in
-  let res = match tweets with 
-    | [] -> None | [c] -> Some c
-    | _ -> raise Inconsistency in
+  let tweets = List.map (fun eff -> match eff with
+                           | (Tweet.New {content}) -> Some content
+                           | _ -> None) ctxt in
+  let res = List.first_some tweets in
     res
 
 let get_userline uid = 
   let ctxt = Userline_table.get uid (Userline.Get) in
-  let tids = List.concat @@ 
-               List.map 
+  let tweets = List.map 
                  (fun x -> match x with 
-                    | (Userline.NewTweet {tweet_id}) -> [tweet_id] 
-                    | _ -> []) ctxt in
-  let tweets = List.map (fun tid -> match get_tweet tid with 
-                           | Some c -> c
-                           | None -> raise Inconsistency) tids in
+                    | (Userline.NewTweet {tweet_id=tid}) -> 
+                        Some (get_tweet tid)
+                    | _ -> None) ctxt in
+  let _ = List.iter (fun top -> match top with 
+                           | Some x ->  (match x with
+                                           | Some _ -> ()
+                                           | None -> raise Inconsistency)
+                           | None -> ()) 
+            tweets in
     tweets

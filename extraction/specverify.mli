@@ -1,6 +1,6 @@
 open Speclang
 open Specelab
 
-type env = {ke:KE.t; te:TE.t; pe: Predicate.t list; ve:VE.t}
+type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
 
-val doIt : env  -> Rdtspec.t -> int -> unit
+val doIt : env_t  -> Rdtspec.t -> int -> unit

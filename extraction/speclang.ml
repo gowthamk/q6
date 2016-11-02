@@ -21,6 +21,7 @@ struct
   let id = other "Id"
   let uuid = other "UUID"
   let eff = other "Eff"
+  let ssn = other "Ssn"
   let is_oper t = (t = oper)
   let is_eff t = (t = eff)
 end
@@ -40,6 +41,8 @@ struct
                  res_t: type_desc;
                  body: expression}
 
+  let name (T {name}) = name
+
   let anonymous = Ident.create "<anon>"
 
   let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
@@ -51,6 +54,7 @@ module Kind =
 struct
  type t = Uninterpreted 
         | Variant of Cons.t list (* Cons.t includes a recognizer *)
+        | Enum of Ident.t list
         | Extendible of Ident.t list ref
         | Alias of Type.t
 
@@ -60,6 +64,10 @@ struct
                            (fun (Cons.T {name}) -> Ident.name name)
                            cons_list in
           "Variant ["^(String.concat "," cons_names)^"]"
+    | Enum ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) ids in
+          "Enum ["^(String.concat "," id_names)^"]"
     | Extendible ids -> 
         let id_names = List.map
                          (fun id -> Ident.name id) !ids in

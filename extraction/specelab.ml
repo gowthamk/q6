@@ -152,23 +152,20 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
   (* 10. UUID type def to KE *)
   let add_UUID ke = 
     KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
-  (*
-  (* 11. Uuid.create to TE *)
-  let add_Uuid_create te = 
-    let typ = Type.Arrow (Type.Unit,Type.uuid) in
-    let id = Ident.create "Uuid.create" in
+  (* 11. ssn type def to KE *)
+  let add_Ssn ke = 
+    let enums = List.map Fun.name (reads @ writes) in 
+      KE.add (Ident.create "Ssn") (Kind.Enum enums) ke in
+  (* 12. ssn function to TE *)
+  let add_ssn te = 
+    let typ = Type.Arrow (Type.eff,Type.ssn) in
+    let id = Ident.create "ssn" in
       TE.add id typ te in
-  (* 12. Pervasives.@@ to TE *)
-  let add_Pervasives_atat te = 
-    let typ = Type.Any in
-    let id = Ident.create "Pervasives.@@" in
+  (* 13. seqno function to TE *)
+  let add_seqno te = 
+    let typ = Type.Arrow (Type.eff,Type.Int) in
+    let id = Ident.create "seqno" in
       TE.add id typ te in
-  (* 13. Pervasives.raise to TE *)
-  let add_Pervasives_raise te = 
-    let typ = Type.Any in
-    let id = Ident.create "Pervasives.raise" in
-      TE.add id typ te in
-   *)
   (* 14. Inconsistency to VE *)
   let add_Inconsistency ve = 
     let id = Ident.create "Inconsistency" in
@@ -179,10 +176,12 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
 
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
-      [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID] in
+      [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID;
+       add_Ssn] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
-      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys] in
+      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys; 
+       add_ssn; add_seqno] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in
