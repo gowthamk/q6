@@ -152,22 +152,40 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
   (* 10. UUID type def to KE *)
   let add_UUID ke = 
     KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
-  (* 11. UUID.create to TE *)
-  let add_UUID_create te = 
+  (*
+  (* 11. Uuid.create to TE *)
+  let add_Uuid_create te = 
     let typ = Type.Arrow (Type.Unit,Type.uuid) in
-    let id = Ident.create "UUID.create" in
+    let id = Ident.create "Uuid.create" in
       TE.add id typ te in
+  (* 12. Pervasives.@@ to TE *)
+  let add_Pervasives_atat te = 
+    let typ = Type.Any in
+    let id = Ident.create "Pervasives.@@" in
+      TE.add id typ te in
+  (* 13. Pervasives.raise to TE *)
+  let add_Pervasives_raise te = 
+    let typ = Type.Any in
+    let id = Ident.create "Pervasives.raise" in
+      TE.add id typ te in
+   *)
+  (* 14. Inconsistency to VE *)
+  let add_Inconsistency ve = 
+    let id = Ident.create "Inconsistency" in
+    let sv = SV.EffCons (Cons.T {name=id; 
+                                 recognizer=id (*dummy*);
+                                 args=[]}) in
+      VE.add id sv ve in
 
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
       [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
-      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys; 
-       add_UUID_create] in
+      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
-      [add_effcons_aliases; add_funs] in
+      [add_effcons_aliases; add_funs; add_Inconsistency] in
     (ke,te,ve)
 
 let doIt rdt_spec = 

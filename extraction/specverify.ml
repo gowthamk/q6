@@ -5,10 +5,13 @@ open Rdtspec
 open Specelab (* hiding doIt *)
 open Speclang
 module SV = SymbolicVal
+module P = Predicate
+
+exception Inconsistency
 
 type env = {ke:KE.t; te:TE.t; pe: Predicate.t list; ve:VE.t}
 
-type vc_t = TE.t * Predicate.t * Predicate.t
+type vc_t = TE.t * Predicate.t list * Predicate.t
 
 (* type lhd = {new_te:TE.t; new_pe: Predicate.t list;  new_vcs: vc_t list} *)
 
@@ -20,6 +23,16 @@ let lhd0 = {new_te = TE.empty; new_pe = []; new_vcs = []}
 let (<+>) env res = {env with te=TE.merge env.te res.new_te;
                               pe = env.pe @ res.new_pe}
 *)
+
+let pervasives = [("Pervasives.@@", "@@"); 
+                  ("Pervasives.raise", "raise"); 
+                  ("Uuid.create", "Uuid.create");
+                  ("Pervasives.+", "+"); 
+                  ("Pervasives.-", "-");
+                  ("Pervasives.>", ">");
+                  ("Pervasives.>=", ">=");
+                  ("Pervasives.<", "<");
+                  ("Pervasives.<=", "<=");]
 
 (* 
  * OMGWTFBMC bound
@@ -44,6 +57,26 @@ let find_some_case cases = try List.find (fun case ->
                             is_some_pat case.c_lhs.pat_desc) cases
                            with Not_found -> not_found "Some case not found"
            
+
+let doIt_under_grd env grd doIt = 
+  let xpe = (P.of_sv grd)::env.pe in
+  let xenv = {env with pe=xpe} in
+  let (v,xenv',vcs) = doIt xenv in
+  let new_ps = List.take ((List.length xenv'.pe) - 
+                          (List.length xpe)) xenv'.pe in
+  (*
+   * Condition new predicates in PE and restore original VE.
+   *)
+  let pe' = (List.map (fun new_p -> 
+                         P.If (P.of_sv grd, new_p)) new_ps)
+            @ env.pe in
+  let env' = {xenv' with pe=pe'; ve=env.ve}  in
+    (v, env', vcs)
+
+let mk_vc env grd = 
+  let new_vc = (env.te, env.pe, P.of_sv grd) in
+  let pe' = (P.of_sv grd)::env.pe in
+    ({env with pe=pe'}, new_vc)
 
 let rec type_of_tye ke (tye : type_expr) = 
   let open Path in
@@ -129,8 +162,6 @@ struct
   let fromJust = Ident.create "fromJust"
 end
 
-module P = Predicate
-
 let mk_new_effect (sv1,ty1) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
   let sv_y = SV.Var y in
@@ -164,8 +195,8 @@ let doIt_get env typed_sv1 sv2 =
                                       SV.Var id2]) in
   let vis_preds = List.map (fun yi -> vis(yi,y)) ys in
   let conj_ys = P.of_sv @@ SV.And vis_preds in
-  let _ = Printf.printf "New pred(y):\n%s\n" (P.to_string conj_y) in
-  let _ = Printf.printf "New pred(ys):\n%s\n" (P.to_string conj_ys) in
+  (* Since vis(a,b) => samobj(a,b) => objid(a) = objid(b), we 
+   * don't have to assert it separately. *)
   let te' = List.fold_left (fun te y -> TE.add y Type.eff te)
               env.te (y::ys) in
   (* 
@@ -207,10 +238,8 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let bind_self ve =
     (* Rec function M.f is referred as f in its body *)
     let qualif_name = Ident.name fun_t.name in
-    let _ = Printf.printf "Before last. Qualif:%s\n" qualif_name in
     let unqualif_name = List.last @@ 
                           Str.split (Str.regexp "\.") qualif_name in
-    let _ = print_string "After last\n" in
       VE.add (Ident.create unqualif_name) (SV.Fun (Fun.T fun_t)) ve in
   let xke = List.fold_left (fun ke f -> f ke) env.ke
               [bind_typs] in
@@ -221,7 +250,6 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let (body_sv,xenv',vcs) = doIt_expr xenv fun_t.body in 
   (* restore original KE and VE *)
   let env' = {xenv' with ke=env.ke; ve=env.ve} in
-  let _ = print_string "fun app is done\n" in
     (body_sv, env', vcs)
 
 and doIt_expr env (expr:Typedtree.expression) 
@@ -249,7 +277,11 @@ and doIt_expr env (expr:Typedtree.expression)
             with Not_found -> 
               try let _ = TE.find_name name env.te in 
                 ret (SV.Var (Ident.create name))
-              with Not_found -> failwith @@ name^" not found\n"
+              with Not_found -> 
+                try ret @@ SV.Var (Ident.create @@ 
+                                   List.assoc name pervasives) 
+                with Not_found -> 
+                  failwith @@ name^" not found\n"
           end
     (* constant *)
     | Texp_constant const ->
@@ -266,12 +298,6 @@ and doIt_expr env (expr:Typedtree.expression)
         let (arg_sv2, env'', vcs2) = doIt_expr env' arge2 in
         let sv = SV.cons (arg_sv1,arg_sv2) in
           (sv,env'',vcs1@vcs2)
-        (* let (arg_svs, (env',vcs')) = 
-          List.map_fold_left 
-            (fun (env,vcs) arge -> 
-               let (arg_sv,env',new_vcs) = doIt_expr env arge in
-                  (arg_sv, (env', vcs @ new_vcs)))
-            (env,[]) arg_exprs in *)
     (* [] *)
     | Texp_construct (_,cons_desc, [])
       when (cons_desc.cstr_name = "[]") -> ret (SV.nil)
@@ -283,6 +309,9 @@ and doIt_expr env (expr:Typedtree.expression)
       when (cons_desc.cstr_name = "Some") -> 
         let (arg_v, env', vcs) = doIt_expr env arge in
           (SV.some arg_v, env', vcs)
+    (* () *)
+    | Texp_construct (_,cons_desc, [])
+      when (cons_desc.cstr_name = "()") -> ret (SV.ConstUnit)
     (* EffCons e  *)
     | Texp_construct (li_loc,cons_desc,arg_exprs) -> 
         let li = let open Asttypes in li_loc.txt in
@@ -320,6 +349,9 @@ and doIt_expr env (expr:Typedtree.expression)
         let typ1 = type_of_tye env.ke e1.exp_type in
         let env'' = doIt_append env' (sv1,typ1) sv2 in
           (SV.ConstUnit, env'', vcs)
+    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
+                  args) when (List.length args <> 2) ->
+        failwith @@ (Ident.name id)^".append needs 2 arguments"
     (* Obj_table.get e1 e2 *)
     | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
                   [(Asttypes.Nolabel,Some e1); 
@@ -339,7 +371,8 @@ and doIt_expr env (expr:Typedtree.expression)
         let e2s = map_snd_opts largs in
         let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
         let (res_sv, res_env, res_vcs) = match sv1 with
-          | SV.Var id when (Ident.name id = "UUID.create") -> 
+          (* UUID.create () *)
+          | SV.Var id when (Ident.name id = "Uuid.create") -> 
               let new_uuid = Ident.create @@ fresh_uuid_name () in
               let te' = TE.add new_uuid Type.uuid env.te in
               let uuids = match KE.find_name "UUID" env.ke with
@@ -349,6 +382,13 @@ and doIt_expr env (expr:Typedtree.expression)
                           (Kind.Extendible (ref @@ new_uuid::uuids))
                           env.ke in
                 (SV.Var new_uuid, {env with ke=ke';te=te'}, vcs1 @ vcs2)
+          | SV.Var id when (Ident.name id = "raise") -> 
+              let _ = match sv2s with 
+                | [SV.NewEff (Cons.T {name}, None)]
+                    when (Ident.name name = "Inconsistency") -> ()
+                | _ -> failwith "Not an Inconsistency exception. Unimpl." in
+              let _ = print_string "raising inconsistency\n" in
+                raise Inconsistency
           | SV.Var id -> (SV.App (id,sv2s), env'', vcs1 @ vcs2)
           | SV.Fun (Fun.T fun_t) -> 
               (*
@@ -376,6 +416,11 @@ and doIt_expr env (expr:Typedtree.expression)
         let ve' = VE.add lhs_id sv1 env'.ve in
         let (sv2,env'',vcs2) = doIt_expr {env' with ve=ve'} e2 in
           (sv2,env'',vcs1 @ vcs2)
+    | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_any};
+                           vb_expr=e1}], e2) -> 
+        let (sv1,env',vcs1) = doIt_expr env e1 in
+        let (sv2,env'',vcs2) = doIt_expr env' e2 in
+          (sv2,env'',vcs1 @ vcs2)
     (* \x.e *)
     | Texp_function (_,[case],_) -> 
         let (args,body) = Misc.extract_lambda case in
@@ -397,8 +442,8 @@ and doIt_expr env (expr:Typedtree.expression)
         let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
         let exptyp = type_of_tye env.ke expr.exp_type in
         let scrutyp = type_of_tye env.ke scrutinee.exp_type in
-        let _ = Printf.printf "Type of the match expression:\n" in
-        let _ = Printf.printf "%s\n" @@ Type.to_string exptyp in
+        (*let _ = Printf.printf "Type of the match expression:\n" in
+        let _ = Printf.printf "%s\n" @@ Type.to_string exptyp in*)
         let (sv,env'',vcs2)  = let open SV in match scru_sv with
           | List ([],Some l) -> 
               let _ = print_string "unmanifest during match\n" in
@@ -424,6 +469,37 @@ and doIt_expr env (expr:Typedtree.expression)
           (sv,env'',vcs1 @ vcs2)
     | Texp_match (_,_,ex_cases,_) -> 
         failwith "Match expressions with exception cases Unimpl."
+    | Texp_sequence (e1,e2) -> 
+        let (svs,env',vcs) = doIt_exprs env [e1;e2] in
+          (List.last svs, env', vcs)
+    | Texp_ifthenelse (grde,e1,Some e2) -> 
+        let (true_grd, env1, vcs1) = doIt_expr env grde in
+        let false_grd = SV.Not true_grd in
+        let doIt expr env = doIt_expr env expr in
+        let (v1_op, env2, vcs2) = 
+          try
+            let (v1, env2, vcs2) = doIt_under_grd env1 true_grd 
+                                     (doIt e1) in
+              (Some v1, env2, vcs2)
+          with Inconsistency ->
+            let (env2,new_vc) = mk_vc env1 false_grd in
+              (None, env2, [new_vc]) in
+        let (v2_op, env3, vcs3) = 
+          try
+            let (v2, env3, vcs3) = doIt_under_grd env2 false_grd 
+                                     (doIt e2) in
+              (Some v2, env3, vcs3)
+          with Inconsistency ->
+            let (env3,new_vc) = mk_vc env2 true_grd in
+              (None, env3, [new_vc]) in
+        let sv = match (v1_op, v2_op) with
+          | (Some v1, Some v2) -> 
+              SV.ITE (true_grd, v1, v2) 
+          | (Some v1, None) -> v1 
+          | (None, Some v2) -> v2
+          | (None, None) -> (* over to the parent branch*) 
+               raise Inconsistency in
+          (sv, env3, vcs1 @ vcs2 @ vcs3)
     | _ -> failwith "Unimpl. expr"
 
 and doIt_ite_cases env (grdsv,tsv,fsv) typ cases = 
@@ -433,25 +509,43 @@ and doIt_ite_cases env (grdsv,tsv,fsv) typ cases =
         (* 1. Some case *)
         let some_grd = let open SV in
           App (L.isSome,[scru]) in
+        let none_grd = SV.Not some_grd in
         let some_val = let open SV in
           App (L.fromJust, [scru]) in
-        let xpe = (P.of_sv some_grd)::env.pe in
-        let xenv = {env with pe=xpe} in
-        let (some_sv,xenv',vcs1) = doIt_option_cases xenv 
-                                      (Some some_val) cases in
-        (*
-         * Condition new predicates in PE and restore original VE.
-         *)
-        let new_ps = List.take ((List.length xenv'.pe) - 
-                                (List.length xpe)) xenv'.pe in
-        let pe' = (List.map (fun new_p -> 
-                               P.If (P.of_sv some_grd, new_p)) new_ps)
-                  @ env.pe in
-        let env' = {xenv' with pe=pe'; ve=env.ve}  in
+        let (some_sv_op,env',vcs1) = 
+          try 
+            let doIt env = doIt_option_cases env 
+                             (Some some_val) cases in
+            let (some_sv,env',vcs1) = doIt_under_grd env some_grd doIt in
+              (Some some_sv, env', vcs1)
+          with Inconsistency ->
+            (*
+             * Make a new vc that preempts this branch.
+             *)
+            let new_vc = (env.te, env.pe, P.of_sv none_grd) in
+            (* 
+             * Assume that VC is valid for further analyis.
+             *)
+            let pe' = (P.of_sv none_grd)::env.pe in
+              (None, {env with pe=pe'}, [new_vc]) in
         (* 2. None case *)
-        let (none_sv,env'',vcs2) = doIt_option_cases env' 
-                                     None cases in
-        let sv = SV.ITE (some_grd, some_sv, none_sv) in
+        let (none_sv_op,env'',vcs2) = 
+          try 
+            let doIt env = doIt_option_cases env None cases in
+            let (none_sv, env'', vcs2) = doIt_under_grd env' 
+                                           none_grd doIt in
+              (Some none_sv, env'', vcs2)
+          with Inconsistency -> 
+            let new_vc = (env.te, env.pe, P.of_sv some_grd) in
+            let pe' = (P.of_sv some_grd)::env.pe in
+              (None, {env with pe=pe'}, [new_vc]) in
+        let sv = match (some_sv_op, none_sv_op) with
+          | (Some some_sv, Some none_sv) -> 
+              SV.ITE (some_grd, some_sv, none_sv) 
+          | (Some some_sv, None) -> some_sv 
+          | (None, Some none_sv) -> none_sv
+          | (None, None) -> (* over to the parent branch*) 
+               raise Inconsistency in
           (sv, env'', vcs1 @ vcs2)
     | _ -> failwith "doIt_ite_cases: Unimpl."
 
@@ -462,11 +556,13 @@ and doIt_option_cases env op cases =
   let none_expr = none_case.c_rhs in
   let some_case = find_some_case cases in
   let x_var = match some_case.c_lhs.pat_desc with
-      (Tpat_construct (_,_,[{pat_desc = Tpat_var (id,_)}])) -> id
-    | _ -> failwith "Some patterns other than Some x Unimpl." in
+      (Tpat_construct (_,_,[{pat_desc = Tpat_var (id,_)}])) -> Some id
+    | (Tpat_construct (_,_,[{pat_desc = Tpat_any}])) -> None
+    | _ -> failwith "Some patterns other than Some x and Some _ Unimpl." in
   let some_expr = some_case.c_rhs in
   let doIt_some x_sv = 
-    let xve = VE.add x_var x_sv env.ve in
+    let xve = match x_var with 
+      | None -> env.ve | Some x_var -> VE.add x_var x_sv env.ve in
     let xenv = {env with ve=xve} in
     let (some_sv,env',vcs) = doIt_expr xenv some_expr in
       (some_sv, {env' with ve=env.ve}, vcs) in
@@ -559,13 +655,12 @@ and doIt_list_cases env (conc,abs) cases =
       (Tpat_construct (_,_,[{pat_desc = Tpat_var (id1,_)};
                             {pat_desc = Tpat_var (id2,_)}])) ->
         (id1, id2)
-    | _ -> failwith ":: patterns other than x::xs Unimpl." in
+    | _ -> failwith ":: patterns other than x::xs not supported." in
   let cons_expr = cons_case.c_rhs in
   let doIt_cons x_sv xs_sv = 
     let xve = VE.add  xs_var xs_sv (VE.add x_var x_sv env.ve) in
     let xenv = {env with ve=xve} in
     let (cons_sv,env',vcs) = doIt_expr xenv cons_expr in
-    let _ = print_string "Cons case done\n" in
       (cons_sv, {env' with ve=env.ve}, vcs) in
     match (conc,abs) with
       | ([],None) -> doIt_expr env nil_expr
@@ -582,18 +677,34 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
   let (body_sv,env',vcs) = doIt_expr {env with te=te'} body in
     begin
       Printf.printf "------- Fun done -----\n";
+      (*
       TE.print env'.te;
       List.iter (fun p -> Printf.printf "%s\n" 
                     @@ P.to_string p) env'.pe;
+       *)
+      Printf.printf "---- VCs ----\n";
+      let print_vc (te,antePs,conseqP) = 
+        begin
+          TE.print te;
+          List.iter (fun p -> 
+                       Printf.printf "/\\ \t %s\n" 
+                         (P.to_string p)) antePs;
+          print_string "=>";
+          Printf.printf "\t%s\n" (P.to_string conseqP);
+        end in
+        List.iter print_vc vcs;
       Printf.printf "body_sv:\n %s\n" (SV.to_string body_sv);
       failwith "Unimpl. fun"
     end
 
 let doIt env rdt_spec k' = 
-  let _ = k := 10(*k'*) in
+  let _ = k := k' in
   let Rdtspec.T {schemas; reads; writes; aux} = rdt_spec in
-  let my_fun = List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = "do_test1")
-                 writes in
+  let tmp_name =  "get_user_id_by_name" in
+  let my_fun = try List.find (fun (Fun.T x) -> 
+                            Ident.name x.name = tmp_name)
+                     (writes@reads)
+               with Not_found -> not_found @@ tmp_name
+                    ^" function not found" in
   let _ = doIt_fun env my_fun in
     failwith "Unimpl. Specverify.doIt"

@@ -26,6 +26,12 @@ struct
   let rec iter f l = match l with
     | [] -> ()
     | x::xs -> (f x; iter f xs)
+
+  let rec first_some l = match l with
+    | [] -> None
+    | x::xs -> (match x with 
+                  | None -> first_some xs
+                  | Some _ -> x)
 end
 
 
@@ -89,6 +95,7 @@ struct
     | Get
 end
 module Userline_table =
+
 struct
   include Store_interface.Make(Userline)
 end
@@ -116,21 +123,22 @@ let do_test1 uid name =
 let do_add_user name pwd = 
   let uid = Uuid.create() in
   begin
-    UserName_table.append name @@ UserName.Add {user_id=uid};
-    User_table.append uid @@ User.Add {username=name;pwd=pwd}
+    UserName_table.append name (UserName.Add {user_id=uid});
+    User_table.append uid (User.Add {username=name;pwd=pwd})
   end 
 
 let get_user_id_by_name nm = 
   let ctxt = (* ea *) UserName_table.get nm (UserName.GetId) in
-    (* [sel(e0,ea); sel(e1,ea); sel(e2,ea)]@f(S,ea) *)
-  let ids = List.concat @@ 
-              List.map (function (UserName.Add {user_id=id}) -> [id] 
-                          | _ -> []) ctxt in
-  let res = match ids with
-      | [] -> None
-      | [id] -> Some id
-      | _ -> raise Inconsistency in
-    res
+  let ids = List.map (fun eff -> match eff with 
+                        | (UserName.Add {user_id=id}) -> Some id 
+                        | _ -> None) ctxt in
+  let num_ids = List.fold_right (fun idop acc -> match idop with
+                                   | None -> acc
+                                   | Some _ -> 1 + acc) ids 0 in
+    begin
+      if num_ids > 1 then raise Inconsistency else ();
+      List.first_some ids
+    end
 
 let do_block_user me other  = 
   let Some my_id = get_user_id_by_name me in
@@ -139,7 +147,7 @@ let do_block_user me other  =
       User_table.append my_id (User.Blocks {follower_id=other_id});
       User_table.append other_id (User.IsBlockedBy {leader_id=my_id});
       User_table.append my_id (User.RemFollower {follower_id=other_id}); 
-      User_table.append other_id (User.RemFollowing {leader_id=my_id})
+     User_table.append other_id (User.RemFollowing {leader_id=my_id})
     end
 
 let do_new_tweet uid str = 
