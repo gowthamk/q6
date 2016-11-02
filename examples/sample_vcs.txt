@@ -1,0 +1,142 @@
+------------------------------------------------------
+    VERIFICATION CONDITIONS
+------------------------------------------------------
+
+VC 0:
+bindings {
+  !e0 :-> Eff
+  !e1 :-> Eff
+  !e2 :-> Eff
+  !e3 :-> Eff
+  !e4 :-> Eff
+  !e5 :-> Eff
+  !e6 :-> Eff
+  !e7 :-> Eff
+  !e8 :-> Eff
+  !v0 :-> Eff list
+  !v1 :-> Eff list
+  !v2 :-> string option list
+  !v3 :-> string option
+  !v4 :-> Eff list
+  !v5 :-> string option list
+  !v6 :-> string option
+  !v7 :-> string option option list
+  uid :-> UUID
+} in
+  /\       isUserline_NewTweet(oper(!e1))
+  /\       isUserline_NewTweet(oper(!e2)) => (objid(!e6) = mkkey_UUID(tweet_id(!e2)) 
+                                             && oper(!e6) = Tweet_Get 
+                                             && obtyp(!e6) = Tweet 
+                                             && ssn(!e6) = get_userline 
+                                             && seqno(!e6) = 2)
+  /\       isUserline_NewTweet(oper(!e2)) => (vis(!e7,!e6) && vis(!e8,!e6))
+  /\       isUserline_NewTweet(oper(!e1)) => (objid(!e3) = mkkey_UUID(tweet_id(!e1)) 
+                                             && oper(!e3) = Tweet_Get 
+                                             && obtyp(!e3) = Tweet 
+                                             && ssn(!e3) = get_userline 
+                                             && seqno(!e3) = 1)
+  /\       isUserline_NewTweet(oper(!e1)) => (vis(!e4,!e3) && vis(!e5,!e3))
+  /\       (objid(!e0) = mkkey_UUID(uid) 
+           && oper(!e0) = Userline_Get 
+           && obtyp(!e0) = Userline 
+           && ssn(!e0) = get_userline 
+           && seqno(!e0) = 0)
+  /\       (vis(!e1,!e0) && vis(!e2,!e0))
+=> 
+  isSome((isTweet_New(oper(!e4)))?(Some (content(!e4))):((isTweet_New(oper(!e5)))?(Some (content(!e5))):(!v3)))
+
+VC 1:
+bindings {
+  !e0 :-> Eff
+  !e1 :-> Eff
+  !e2 :-> Eff
+  !e3 :-> Eff
+  !e4 :-> Eff
+  !e5 :-> Eff
+  !e6 :-> Eff
+  !e7 :-> Eff
+  !e8 :-> Eff
+  !v0 :-> Eff list
+  !v1 :-> Eff list
+  !v2 :-> string option list
+  !v3 :-> string option
+  !v4 :-> Eff list
+  !v5 :-> string option list
+  !v6 :-> string option
+  !v7 :-> string option option list
+  uid :-> UUID
+} in
+  /\       isUserline_NewTweet(oper(!e2))
+  /\       isUserline_NewTweet(oper(!e1)) => isSome((isTweet_New(oper(!e4)))?
+                                                      (Some (content(!e4))):
+                                                      ((isTweet_New(oper(!e5)))? (Some (content(!e5))): (!v3)))
+  /\       isUserline_NewTweet(oper(!e2)) => (objid(!e6) = mkkey_UUID(tweet_id(!e2)) 
+                                             && oper(!e6) = Tweet_Get 
+                                             && obtyp(!e6) = Tweet 
+                                             && ssn(!e6) = get_userline 
+                                             && seqno(!e6) = 2)
+  /\       isUserline_NewTweet(oper(!e2)) => (vis(!e7,!e6) && vis(!e8,!e6))
+  /\       isUserline_NewTweet(oper(!e1)) => (objid(!e3) = mkkey_UUID(tweet_id(!e1)) 
+                                             && oper(!e3) = Tweet_Get 
+                                             && obtyp(!e3) = Tweet 
+                                             && ssn(!e3) = get_userline 
+                                             && seqno(!e3) = 1)
+  /\       isUserline_NewTweet(oper(!e1)) => (vis(!e4,!e3) && vis(!e5,!e3))
+  /\       (objid(!e0) = mkkey_UUID(uid) 
+           && oper(!e0) = Userline_Get 
+           && obtyp(!e0) = Userline 
+           && ssn(!e0) = get_userline 
+           && seqno(!e0) = 0)
+  /\       (vis(!e1,!e0) && vis(!e2,!e0))
+=> 
+  isSome((isTweet_New(oper(!e7)))?(Some (content(!e7))):((isTweet_New(oper(!e8)))?(Some (content(!e8))):(!v6)))
+
+------------------------------------------------------
+              ABSTRACT SYMBOLIC TRACE
+------------------------------------------------------
+
+bindings {
+  !e0 :-> Eff
+  !e1 :-> Eff
+  !e2 :-> Eff
+  !e3 :-> Eff
+  !e4 :-> Eff
+  !e5 :-> Eff
+  !e6 :-> Eff
+  !e7 :-> Eff
+  !e8 :-> Eff
+  !v0 :-> Eff list
+  !v1 :-> Eff list
+  !v2 :-> string option list
+  !v3 :-> string option
+  !v4 :-> Eff list
+  !v5 :-> string option list
+  !v6 :-> string option
+  !v7 :-> string option option list
+  !v8 :-> unit
+  uid :-> UUID
+} in
+  /\  (vis(!e1,!e0) && vis(!e2,!e0))
+  /\  (objid(!e0) = mkkey_UUID(uid) 
+      && oper(!e0) = Userline_Get 
+      && obtyp(!e0) = Userline 
+      && ssn(!e0) = get_userline 
+      && seqno(!e0) = 0)
+  /\  isUserline_NewTweet(oper(!e1)) => (vis(!e4,!e3) && vis(!e5,!e3))
+  /\  isUserline_NewTweet(oper(!e1)) => (objid(!e3) = mkkey_UUID(tweet_id(!e1)) 
+                                        && oper(!e3) = Tweet_Get 
+                                        && obtyp(!e3) = Tweet 
+                                        && ssn(!e3) = get_userline 
+                                        && seqno(!e3) = 1)
+  /\  isUserline_NewTweet(oper(!e2)) => (vis(!e7,!e6) && vis(!e8,!e6))
+  /\  isUserline_NewTweet(oper(!e2)) => (objid(!e6) = mkkey_UUID(tweet_id(!e2)) 
+                                        && oper(!e6) = Tweet_Get 
+                                        && obtyp(!e6) = Tweet 
+                                        && ssn(!e6) = get_userline 
+                                        && seqno(!e6) = 2)
+  /\  isUserline_NewTweet(oper(!e1)) => isSome((isTweet_New(oper(!e4)))?
+                                                  (Some (content(!e4))):
+                                                  ((isTweet_New(oper(!e5)))? (Some (content(!e5))): (!v3)))
+  /\  isUserline_NewTweet(oper(!e2)) => isSome((isTweet_New(oper(!e7)))?
+                                                  (Some (content(!e7))):
+                                                  ((isTweet_New(oper(!e8)))? (Some (content(!e8))): (!v6)))
