@@ -75,6 +75,25 @@ struct
     | Alias typ -> "Alias of "^(Type.to_string typ)
 end
 
+module L = 
+struct
+  let objid = Ident.create "objid"
+  let objtyp = Ident.create "obtyp"
+  let oper = Ident.create "oper"
+  let vis = Ident.create "vis"
+  let so = Ident.create "so"
+  let ssn = Ident.create "ssn"
+  let seqno = Ident.create "seqno"
+  let mkkey_string = Ident.create "mkkey_string"
+  let mkkey_UUID = Ident.create "mkkey_UUID"
+  let mkkey = function "string" -> mkkey_string
+    | "UUID" -> mkkey_UUID
+    | _ -> failwith "mkkey not available"
+  let isSome = Ident.create "isSome"
+  let isNone = Ident.create "isNone"
+  let fromJust = Ident.create "fromJust"
+end
+
 module SymbolicVal = 
 struct
   type t = Bot
@@ -139,6 +158,33 @@ struct
   let none = Option None
 
   let some x = Option (Some x)
+
+  let rec simplify assumps gv = 
+    (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
+    match gv with
+      | App (_isSome, [ITE (a, 
+                            Option (Some b), 
+                            Option None)])
+        when (_isSome = L.isSome) -> simplify assumps a
+      | App (_fromJust, [Option (Some a)])
+        when (_fromJust = L.fromJust) -> simplify assumps a
+      | App (f,v2s) -> 
+          let v2s' = List.map (simplify assumps) v2s in
+          let same = List.map2 (=) v2s v2s' in
+          let all_same = List.fold_left (&&) true same in 
+            if not all_same then simplify assumps (App (f, v2s'))
+            else App (f,v2s)
+      | ITE (a,b,c) -> if List.mem a assumps 
+                       then simplify assumps b 
+                       else if List.mem (Not a) assumps 
+                       then simplify assumps b
+                       else ITE (simplify assumps a, 
+                                 simplify (a::assumps) b, 
+                                 simplify ((Not a)::assumps) c)
+      | _ -> gv
+
+  let ite (v1,v2,v3) = simplify [] @@ ITE (v1,v2,v3)
+  let app ((v1:Ident.t),(v2s : t list)) = simplify [] @@ App (v1,v2s)
 end
 
 module Predicate =
@@ -154,6 +200,12 @@ struct
   let rec to_string = function BoolExpr sv -> SV.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | _ -> failwith "P.to_string Unimpl."
+
+  let _if (t1,t2) = match (t1,t2) with
+    | (BoolExpr v1, BoolExpr v2)  -> 
+        let (v1',v2') = (SV.simplify [] v1, SV.simplify [v1] v2) in
+          If (BoolExpr v1', BoolExpr v2')
+    | _ -> If (t1,t2)
 end
 
 module Misc =

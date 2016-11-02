@@ -2,7 +2,7 @@ open Utils
 open Types
 open Typedtree
 open Rdtspec
-open Specelab (* hiding doIt *)
+open Specelab
 open Speclang
 module SV = SymbolicVal
 module P = Predicate
@@ -75,14 +75,24 @@ let doIt_under_grd env grd doIt =
    * Condition new predicates in PE and restore original VE.
    *)
   let pe' = (List.map (fun new_p -> 
-                         P.If (P.of_sv grd, new_p)) new_ps)
+                         P._if (P.of_sv grd, new_p)) new_ps)
             @ env.pe in
   let env' = {xenv' with pe=pe'; ve=env.ve}  in
     (v, env', vcs)
 
 let mk_vc env grd = 
-  let new_vc = (env.te, env.pe, P.of_sv grd) in
-  let pe' = (P.of_sv grd)::env.pe in
+  let assumps = (List.concat @@ List.map 
+                           (function P.BoolExpr v -> [v]
+                              | _ -> []) env.pe) in
+  let _ = printf "-- Assumps are: %s --\n" 
+    (String.concat ", " @@ List.map SV.to_string assumps) in
+  let conseqP = 
+    P.of_sv @@ SV.simplify assumps grd in
+  let new_vc = (env.te, env.pe, conseqP) in
+  (* 
+   * Assume that VC is valid for further analyis.
+   *)
+  let pe' = conseqP::env.pe in
     ({env with pe=pe'}, new_vc)
 
 let rec type_of_tye ke (tye : type_expr) = 
@@ -152,25 +162,6 @@ let gen_name name_base =
 let fresh_eff_name = gen_name "!e"
 let fresh_name = gen_name "!v"
 let fresh_uuid_name = gen_name "!uuid"
-
-module L = 
-struct
-  let objid = Ident.create "objid"
-  let objtyp = Ident.create "obtyp"
-  let oper = Ident.create "oper"
-  let vis = Ident.create "vis"
-  let so = Ident.create "so"
-  let ssn = Ident.create "ssn"
-  let seqno = Ident.create "seqno"
-  let mkkey_string = Ident.create "mkkey_string"
-  let mkkey_UUID = Ident.create "mkkey_UUID"
-  let mkkey = function "string" -> mkkey_string
-    | "UUID" -> mkkey_UUID
-    | _ -> failwith "mkkey not available"
-  let isSome = Ident.create "isSome"
-  let isNone = Ident.create "isNone"
-  let fromJust = Ident.create "fromJust"
-end
 
 let mk_new_effect env (sv1,ty1) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
@@ -517,7 +508,7 @@ and doIt_expr env (expr:Typedtree.expression)
               (None, env3, [new_vc]) in
         let sv = match (v1_op, v2_op) with
           | (Some v1, Some v2) -> 
-              SV.ITE (true_grd, v1, v2) 
+              SV.ite (true_grd, v1, v2) 
           | (Some v1, None) -> v1 
           | (None, Some v2) -> v2
           | (None, None) -> (* over to the parent branch*) 
@@ -529,11 +520,9 @@ and doIt_sv_cases env scru typ cases =
   let open Type in match typ with
     | Option _ -> 
         (* 1. Some case *)
-        let some_grd = let open SV in
-          App (L.isSome,[scru]) in
+        let some_grd = SV.app (L.isSome,[scru]) in
         let none_grd = SV.Not some_grd in
-        let some_val = let open SV in
-          App (L.fromJust, [scru]) in
+        let some_val = SV.app (L.fromJust, [scru]) in
         let (some_sv_op,env',vcs1) = 
           try 
             let doIt env = doIt_option_cases env 
@@ -550,12 +539,8 @@ and doIt_sv_cases env scru typ cases =
             (*
              * Make a new vc that preempts this branch.
              *)
-            let new_vc = (env.te, env.pe, P.of_sv none_grd) in
-            (* 
-             * Assume that VC is valid for further analyis.
-             *)
-            let pe' = (P.of_sv none_grd)::env.pe in
-              (None, {env with pe=pe'}, [new_vc]) in
+            let (env',new_vc) = mk_vc env none_grd in
+              (None, env', [new_vc]) in
         (* 2. None case *)
         let (none_sv_op,env'',vcs2) = 
           try 
@@ -564,12 +549,11 @@ and doIt_sv_cases env scru typ cases =
                                            none_grd doIt in
               (Some none_sv, env'', vcs2)
           with Inconsistency -> 
-            let new_vc = (env.te, env.pe, P.of_sv some_grd) in
-            let pe' = (P.of_sv some_grd)::env.pe in
-              (None, {env with pe=pe'}, [new_vc]) in
+            let (env'',new_vc) = mk_vc env' some_grd in
+              (None, env'', [new_vc]) in
         let sv = match (some_sv_op, none_sv_op) with
           | (Some some_sv, Some none_sv) -> 
-              SV.ITE (some_grd, some_sv, none_sv) 
+              SV.ite (some_grd, some_sv, none_sv) 
           | (Some some_sv, None) -> some_sv 
           | (None, Some none_sv) -> none_sv
           | (None, None) -> (* over to the parent branch*) 
@@ -610,9 +594,9 @@ and doIt_eff_case env eff =
     let Cons.T cons_t = match cons_sv with | SV.EffCons c -> c
               | _ -> failwith "doIt_eff_case: Unexpected." in
     let eff_var = SV.Var eff in
-    let grd = let open SV in
+    let grd = 
       (* e.g: isUserName_Add(oper(!e2)) *)
-      App (cons_t.recognizer,[App (L.oper,[eff_var])]) in
+      SV.app (cons_t.recognizer,[SV.app (L.oper,[eff_var])]) in
     let xve_fld_pat ve fld_id fld_pat = match fld_pat.pat_desc with
       | Tpat_var (id,_) -> 
           let sv = SV.App (fld_id,[eff_var]) in
@@ -636,7 +620,7 @@ and doIt_eff_case env eff =
     let new_ps = List.take ((List.length xenv'.pe) - 
                             (List.length xpe)) xenv'.pe in
     let pe' = (List.map (fun new_p -> 
-                           P.If (P.of_sv grd, new_p)) new_ps)
+                           P._if (P.of_sv grd, new_p)) new_ps)
               @ env.pe in
     let env' = {xenv' with pe=pe'; ve=env.ve}  in
       ((Some grd,case_sv), env', vcs)
@@ -660,7 +644,7 @@ and doIt_eff_cases env eff cases =
                           elsee) 
      | _ -> failwith "doIt_eff_cases: Unexpected" in
    let grded_sv = List.fold_right 
-                    (fun (grd,ifee) elsee -> SV.ITE (grd,ifee,elsee))
+                    (fun (grd,ifee) elsee -> SV.ite (grd,ifee,elsee))
                     (ifes : (SV.t*SV.t) list) elsee in
      (grded_sv, env', vcs)
 
@@ -727,7 +711,6 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
         end in
         List.iter print_vc vcs;
       Printf.printf "body_sv:\n %s\n" (SV.to_string body_sv);
-      failwith "Unimpl. fun"
     end
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
