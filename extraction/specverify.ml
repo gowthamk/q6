@@ -11,8 +11,13 @@ module VC = Vc
 exception Inconsistency
 
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
-type env = {ssn: Ident.t; seqno:int; ke:KE.t; 
-            te:TE.t; pe: Predicate.t list; ve:VE.t}
+type env = {ssn: Ident.t; 
+            seqno:int; 
+            ke:KE.t; 
+            te:TE.t; 
+            pe: Predicate.t list; (* All predicates *)
+            path: SV.t list; (* branch predicates *)
+            ve:VE.t}
 
 (* Symbolic Trace *)
 type st_t = TE.t * Predicate.t list
@@ -65,18 +70,14 @@ let (--) te1 te2 =
       te1 TE.empty
 
 let doIt_under_grd env grd doIt = 
-  let xpe = (P.of_sv grd)::env.pe in
-  let xenv = {env with pe=xpe} in
+  let grdp = P.of_sv grd in
+  let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
+  let xenv = {env with pe=xpe; path=xpath} in
   let (v,xenv',vcs) = doIt xenv in
-  let new_ps = List.take ((List.length xenv'.pe) - 
-                          (List.length xpe)) xenv'.pe in
-  (*
-   * Condition new predicates in PE and restore original VE.
-   *)
-  let pe' = (List.map (fun new_p -> 
-                         P._if (P.of_sv grd, new_p)) new_ps)
-            @ env.pe in
-  let env' = {xenv' with pe=pe'; ve=env.ve}  in
+  (* Remove grdp from pe *)
+  let pe' = List.filter (fun p -> p <> grdp) xenv'.pe in
+  (* Restore path and ve *)
+  let env' = {xenv' with pe=pe'; path=env.path; ve=env.ve}  in
     (v, env', vcs)
 
 let mk_vc env grd = 
@@ -91,7 +92,7 @@ let mk_vc env grd =
   (* 
    * Assume that VC is valid for further analyis.
    *)
-  let pe' = conseqP::env.pe in
+  let pe' = env.pe @ [conseqP] in
     ({env with pe=pe'}, new_vc)
 
 let rec type_of_tye ke (tye : type_expr) = 
@@ -181,33 +182,47 @@ let mk_new_effect env (sv1,ty1) sv2 =
                  | _ -> failwith "Unexpected form of EffCons name" in
   let phi_3 = SV.Eq (SV.App (L.objtyp, [sv_y]), 
                      SV.Var objtyp) in
-  let phi_4 = SV.Eq (SV.App (L.ssn, [sv_y]), 
-                     SV.Var env.ssn) in
-  let phi_5 = SV.Eq (SV.App (L.seqno, [sv_y]), 
-                     SV.ConstInt env.seqno) in
   let doIt_arg (arg_id,arg_sv) = SV.Eq (SV.App (arg_id, [sv_y]), 
                                         arg_sv) in
-  let phis_6 = List.map doIt_arg args in
-  let conj = P.of_sv @@ SV.And (phi_1::phi_2::phi_3::phi_4
-                                ::phi_5::phis_6) in
-  let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in
-    (y,conj)
+  let phis_4 = List.map doIt_arg args in
+  (* For the new effect, phi_1 to phi_4 are true only under 
+  * the current branch *)
+  let tcond = P.of_svs env.path in
+  let tconj = P.of_sv @@ SV.And ([phi_1; phi_2; phi_3]@phis_4)in
+  let tcondp = P._if (tcond, tconj) in
+  let phi_2' = SV.Eq (SV.App (L.oper, [sv_y]), 
+                     SV.Var L.nop) in
+  (* phi_2' is true anywhere outside the current branch *)
+  let fcond = P.of_sv @@ SV.Not (SV.And env.path) in
+  let fcondp = P._if (fcond, P.of_sv phi_2') in
+  let phi_5 = SV.Eq (SV.App (L.ssn, [sv_y]), 
+                     SV.Var env.ssn) in
+  let phi_6 = SV.Eq (SV.App (L.seqno, [sv_y]), 
+                     SV.ConstInt env.seqno) in
+  (* phi_5 and phi_6 are true unconditionally *)
+  let uncondp = P.of_sv @@ SV.And [phi_5; phi_6] in
+  let ps = [tcondp; fcondp; uncondp] in
+  (* let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in*)
+    (y,ps)
 
 let doIt_append env typed_sv1 sv2 =
-  let (y,conj) = mk_new_effect env typed_sv1 sv2 in
+  let (y,ps) = mk_new_effect env typed_sv1 sv2 in
   let te' = TE.add y Type.eff env.te in
-  let pe' = conj::env.pe in
+  let pe' = env.pe @ ps in
   let seqno' = env.seqno + 1 in
     {env with seqno=seqno';te=te'; pe=pe'}
 
 let doIt_get env typed_sv1 sv2 = 
-  let (y,conj_y) = mk_new_effect env typed_sv1 sv2 in
+  let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
   let ys = List.tabulate !k 
              (fun _ -> Ident.create @@ fresh_eff_name ()) in
   let vis (id1,id2) = SV.App (L.vis, [SV.Var id1;
                                       SV.Var id2]) in
   let vis_preds = List.map (fun yi -> vis(yi,y)) ys in
-  let conj_ys = P.of_sv @@ SV.And vis_preds in
+  let visp = P.of_sv @@ SV.And vis_preds in
+  (* Only under the current branch is visp true *)
+  let tcond = P.of_svs env.path in
+  let ys_p = P._if (tcond, visp) in
   (* Since vis(a,b) => samobj(a,b) => objid(a) = objid(b), we 
    * don't have to assert it separately. *)
   let te' = List.fold_left (fun te y -> TE.add y Type.eff te)
@@ -218,7 +233,7 @@ let doIt_get env typed_sv1 sv2 =
    *)
   let l = Ident.create @@ fresh_name () in
   let te'' = TE.add l (Type.List Type.eff) te' in
-  let pe' = conj_y::conj_ys::env.pe  in
+  let pe' = env.pe @ y_ps @ [ys_p] in
   let seqno' = env.seqno + 1 in
   let env' = {env with seqno=seqno'; te=te''; pe=pe'} in
   let ret_sv = SV.List (List.map (fun yi -> SV.Var yi) ys, 
@@ -596,18 +611,11 @@ and doIt_eff_case env eff =
       | [{pat_desc = Tpat_record (fld_pats,_)}] -> 
             xve_fld_pats env.ve fld_pats 
       | _ -> failwith "Unexpected EffCons arg match" in
-    let xpe = (P.of_sv grd)::env.pe in
-    let xenv = {env with pe=xpe; ve=xve} in
-    let (case_sv, xenv', vcs) = doIt_expr xenv case_expr in
-    (*
-     * Condition new predicates in PE and restore original VE.
-     *)
-    let new_ps = List.take ((List.length xenv'.pe) - 
-                            (List.length xpe)) xenv'.pe in
-    let pe' = (List.map (fun new_p -> 
-                           P._if (P.of_sv grd, new_p)) new_ps)
-              @ env.pe in
-    let env' = {xenv' with pe=pe'; ve=env.ve}  in
+    let xenv = {env with ve=xve} in
+    let doIt env = doIt_expr env case_expr in
+    let (case_sv, xenv', vcs) = doIt_under_grd xenv grd doIt in
+    (* Restore original VE.  *)
+    let env' = {xenv' with ve=env.ve}  in
       ((Some grd,case_sv), env', vcs)
   | {c_lhs = {pat_desc = Tpat_any}; c_rhs = case_expr} ->
       let (case_sv, env', vcs) = doIt_expr env case_expr in
@@ -674,9 +682,9 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
               env.te args_tys in
   let (body_sv,env',vcs) = doIt_expr {env with te=te'} body in
   let diff_te = env'.te -- env.te in
-  let st = (diff_te, List.rev env'.pe) in
+  let st = (diff_te, env'.pe) in
   let vcs = List.map (fun (te',p1,p2) -> 
-                        (te' -- env.te, List.rev p1, p2)) vcs in
+                        (te' -- env.te, p1, p2)) vcs in
     begin
       Printf.printf "------- Symbolic Trace -----\n";
       VC.print (fst st, snd st, P.of_sv @@ SV.ConstBool true);
@@ -688,13 +696,13 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
 let doIt (ke,te,pe,ve) rdt_spec k' = 
   let _ = k := 2 (* k'*) in
   let Rdtspec.T {schemas; reads; writes; aux} = rdt_spec in
-  let tmp_name =  "get_userline" in
+  let tmp_name =  "do_new_tweet" in
   let my_fun = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name)
                      (writes@reads)
                with Not_found -> not_found @@ tmp_name
                     ^" function not found" in
   let env = {ssn=Fun.name my_fun; seqno=0; 
-             ke=ke; te=te; pe=pe; ve=ve} in
+             ke=ke; te=te; pe=pe; path=[]; ve=ve} in
   let _ = doIt_fun env my_fun in
     failwith "Unimpl. Specverify.doIt"

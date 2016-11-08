@@ -92,6 +92,7 @@ struct
   let isSome = Ident.create "isSome"
   let isNone = Ident.create "isNone"
   let fromJust = Ident.create "fromJust"
+  let nop = Ident.create "Nop"
 end
 
 module SymbolicVal = 
@@ -193,15 +194,30 @@ struct
     | If of t * t 
     | Forall of ((Ident.t * Type.t) list -> t)
 
-  let of_sv sv = BoolExpr sv
-
   module SV = SymbolicVal
+
+  let of_sv sv = match sv with
+    | SV.And [v] -> BoolExpr v
+    | SV.Not (SV.And [v]) -> BoolExpr (SV.Not v) 
+    | SV.Not (SV.And []) -> BoolExpr (SV.ConstBool false)
+    | SV.Not (SV.ConstBool true) -> BoolExpr (SV.ConstBool false)
+    | SV.Not (SV.ConstBool false) -> BoolExpr (SV.ConstBool true)
+    | _ -> BoolExpr sv
+
+  let of_svs svs = match svs with
+    | [] -> BoolExpr (SV.ConstBool true)
+    | [v] -> BoolExpr v
+    | _ -> BoolExpr (SV.And svs)
 
   let rec to_string = function BoolExpr sv -> SV.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | _ -> failwith "P.to_string Unimpl."
 
   let _if (t1,t2) = match (t1,t2) with
+    | (BoolExpr (SV.ConstBool true), BoolExpr v2) -> 
+         BoolExpr (SV.simplify [] v2)
+    | (BoolExpr (SV.ConstBool false), BoolExpr v2) -> 
+         BoolExpr (SV.ConstBool true)
     | (BoolExpr v1, BoolExpr v2)  -> 
         let (v1',v2') = (SV.simplify [] v1, SV.simplify [v1] v2) in
           If (BoolExpr v1', BoolExpr v2')
