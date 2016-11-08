@@ -57,7 +57,6 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
     match ctyp_desc with
       | Ttyp_constr (path,longident,_) -> 
           let path_str = Printtyp.string_of_path path in
-          (* let _ = Printf.printf "path: %s\n" path_str in *)
           let coltype_of_str str = match Str.split (Str.regexp "\.") path_str with
             | ["id"] -> Coltype.Fkey mod_name
             | [table_name;"id"] -> Coltype.Fkey (Ident.create table_name)
@@ -79,7 +78,6 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
        (arg_id,arg_t) in
   let doIt_cons_decl {cd_name; cd_args} = 
     let name = let open Asttypes in Ident.create cd_name.txt in
-    let _ = Printf.printf "constr: %s\n" @@ Ident.name name in
     let label_decs = match cd_args with 
       | Cstr_record d -> d
       | Cstr_tuple [] -> []
@@ -184,11 +182,11 @@ let extract_aux_mods str_items ttype_names =
 
 let doIt ppf ({str_items; str_type; str_final_env}) = 
   let ttype_paths = extract_ttype_paths str_items in
-  let _ = print_string "Table Type paths:\n" in
+  (* let _ = print_string "Table Type paths:\n" in*)
   let ttype_names = List.map
             (fun path -> 
                let name = Printtyp.string_of_path path in
-               let _ = Printf.printf "%s\n" name in
+               (* let _ = Printf.printf "%s\n" name in*)
                   name) ttype_paths in
   let ttype_mods = extract_ttype_mods ttype_names str_items in
   let ttype_schemas = List.map 
@@ -199,8 +197,6 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
                         ttype_mods in
   let (reads,writes,aux) = extract_funs str_items in
   let aux_mods = extract_aux_mods str_items ttype_names in
-  let _ = List.iter (fun (name,_) -> Printf.printf "%s is aux mod\n" name)
-            aux_mods in
   let new_aux = 
     List.concat @@ List.map
        (fun (mod_name,mod_exp) -> 
@@ -213,9 +209,6 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
           let (x,y,z) = extract_funs str_items in
           let new_funs = List.map rename_fun (x @ y @ z) in
             new_funs) aux_mods in
-  let _ = List.iter
-            (fun (Fun.T fun_t) -> Printf.printf "%s is an aux fun\n" 
-                                    (Ident.name fun_t.name)) new_aux in
   let print_fname (name,expr) = Printf.printf "%s\n" name in
   let rdt_spec = Rdtspec.make ~schemas: ttype_schemas ~reads: reads
                    ~writes:writes ~aux:(aux @ new_aux) in

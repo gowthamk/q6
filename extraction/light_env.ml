@@ -30,6 +30,6 @@ struct
   let iter = Ident.iter
   let print = Ident.iter 
       (fun id elem -> 
-        let str = (Ident.name id)^" :-> "^(Val.to_string elem) in
+        let str = "  "^(Ident.name id)^" :-> "^(Val.to_string elem) in
           Printf.printf "%s\n" str) 
 end

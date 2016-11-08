@@ -67,10 +67,10 @@ default: q6.opt
 MYFILES=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
 				extraction/rdtextract.cmi extraction/rdtextract.cmx extraction/light_env.cmi \
 				extraction/light_env.cmx extraction/specelab.cmi extraction/specelab.cmx \
-				extraction/specverify.cmi extraction/specverify.cmx 
+				extraction/vc.cmi extraction/vc.cmx extraction/specverify.cmi extraction/specverify.cmx 
 MYCMX=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
 			extraction/rdtextract.cmx extraction/light_env.cmx extraction/specelab.cmx \
-			extraction/specverify.cmx
+			extraction/vc.cmx extraction/specverify.cmx
 
 q6.byte: $(ALLOBJS)
 	$(CAMLC) $(LINKFLAGS) -custom -o q6.byte str.cma unix.cma nums.cma $(ALLOBJS)

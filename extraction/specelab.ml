@@ -92,10 +92,8 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
       KE.add (Ident.create "ObjType") (Kind.Variant all_cons) in
   (* 2. Id typedef to KE *)
   let add_Id = KE.add (Ident.create "Id") Kind.Uninterpreted in
-  let _ = Printf.printf "Id type...\n" in
   (* 3. Oper typedef to KE *)
   let aliased_oper_cons = extract_oper_cons schemas in
-  let _ = Printf.printf "aliased_oper_cons ...\n" in
   let (_,oper_cons) = List.split aliased_oper_cons in
   let add_Oper = KE.add (Ident.create "Oper") 
                    (Kind.Variant oper_cons) in
@@ -105,7 +103,6 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
              (fun ve (alias,cons) -> 
                 VE.add alias (SV.EffCons cons) ve) 
              ve aliased_oper_cons in
-  let _ = Printf.printf "Effcons aliases ...\n" in
   (* 5. Oper constructor recognizers to TE *)
   (* eg: "isUser_Add" :-> Type.oper -> Type.Bool *)
   let add_Oper_recognizers te = 

@@ -6,6 +6,7 @@ open Specelab
 open Speclang
 module SV = SymbolicVal
 module P = Predicate
+module VC = Vc
 
 exception Inconsistency
 
@@ -15,8 +16,6 @@ type env = {ssn: Ident.t; seqno:int; ke:KE.t;
 
 (* Symbolic Trace *)
 type st_t = TE.t * Predicate.t list
-(* Verification Condition *)
-type vc_t = TE.t * Predicate.t list * Predicate.t
 
 let ppf = Format.std_formatter
 
@@ -84,8 +83,8 @@ let mk_vc env grd =
   let assumps = (List.concat @@ List.map 
                            (function P.BoolExpr v -> [v]
                               | _ -> []) env.pe) in
-  let _ = printf "-- Assumps are: %s --\n" 
-    (String.concat ", " @@ List.map SV.to_string assumps) in
+  (*let _ = printf "-- Assumps are: %s --\n" 
+    (String.concat ", " @@ List.map SV.to_string assumps) in*)
   let conseqP = 
     P.of_sv @@ SV.simplify assumps grd in
   let new_vc = (env.te, env.pe, conseqP) in
@@ -268,7 +267,7 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
     (body_sv, env', vcs)
 
 and doIt_expr env (expr:Typedtree.expression) 
-      : SV.t * env * vc_t list = 
+      : SV.t * env * VC.t list = 
   let open Path in
   (* let _ = Printtyped.expression 0 (Format.std_formatter) expr in*)
   let ret sv = (sv, env, []) in
@@ -331,7 +330,6 @@ and doIt_expr env (expr:Typedtree.expression)
     | Texp_construct (li_loc,cons_desc,arg_exprs) -> 
         let li = let open Asttypes in li_loc.txt in
         let cstr_name = String.concat "." @@ Longident.flatten li in
-        let _ = Printf.printf "EffCons(%s)\n" cstr_name in
         let cstr_sv = try VE.find_name cstr_name env.ve 
                       with Not_found -> failwith @@ 
                               "Unknown constructor: "^cstr_name in
@@ -348,9 +346,7 @@ and doIt_expr env (expr:Typedtree.expression)
     | Texp_record (flds,None) -> 
         let fld_exprs = List.map (fun (_,_,z) -> z) flds in
         let (fld_svs,env',vcs) = doIt_exprs env fld_exprs in
-        let id_of_ld ld = 
-          let _ = Printf.printf "label name: %s\n" ld.lbl_name in
-            Ident.create @@ ld.lbl_name in
+        let id_of_ld ld = Ident.create @@ ld.lbl_name in
         let fld_ids = List.map (fun (_,ld,_) -> id_of_ld ld) flds in
         let sv = SV.Record (List.combine fld_ids fld_svs) in
           (sv,env',vcs)
@@ -359,7 +355,6 @@ and doIt_expr env (expr:Typedtree.expression)
     | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
                   [(Asttypes.Nolabel,Some e1); 
                    (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
-        let _ = Printf.printf "processing append...\n" in
         let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
         let typ1 = type_of_tye env.ke e1.exp_type in
         let env'' = doIt_append env' (sv1,typ1) sv2 in
@@ -371,7 +366,6 @@ and doIt_expr env (expr:Typedtree.expression)
     | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
                   [(Asttypes.Nolabel,Some e1); 
                    (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
-        let _ = Printf.printf "processing get...\n" in
         let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
         let typ1 = type_of_tye env.ke e1.exp_type in
         let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
@@ -471,8 +465,6 @@ and doIt_expr env (expr:Typedtree.expression)
           | Var id -> 
               let name = Ident.name id in
               let typ = TE.find_name name env.te in
-              let _ = Printf.printf "Scrutinee var: %s:%s\n" 
-                        name (Type.to_string typ) in
               let _ = if Type.is_eff typ then ()
                       else failwith "Scrutinee is non-eff var" in
                 doIt_eff_cases env id cases
@@ -528,12 +520,6 @@ and doIt_sv_cases env scru typ cases =
             let doIt env = doIt_option_cases env 
                              (Some some_val) cases in
             let (some_sv,env',vcs1) = doIt_under_grd env some_grd doIt in
-            let _ = 
-              begin
-                printf "doIt_under_grd returned\n";
-                printf "Top pred is:\n %s\n"
-                  (P.to_string @@ List.hd env'.pe)
-              end in 
               (Some some_sv, env', vcs1)
           with Inconsistency ->
             (*
@@ -588,7 +574,6 @@ and doIt_eff_case env eff =
             c_rhs = case_expr} ->
     let li = let open Asttypes in li_loc.txt in
     let cstr_name = String.concat "." @@ Longident.flatten li in
-    let _ = Printf.printf "doIt_eff_case: cstr_name=%s\n" cstr_name in
     let cons_sv = try VE.find_name cstr_name env.ve
                   with Not_found -> not_found "cstr not found" in
     let Cons.T cons_t = match cons_sv with | SV.EffCons c -> c
@@ -691,25 +676,12 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
   let diff_te = env'.te -- env.te in
   let st = (diff_te, List.rev env'.pe) in
   let vcs = List.map (fun (te',p1,p2) -> 
-                        (te' -- env.te, p1, p2)) vcs in
+                        (te' -- env.te, List.rev p1, p2)) vcs in
     begin
       Printf.printf "------- Symbolic Trace -----\n";
-      printf "let\n";
-      TE.print (fst st);
-      printf "in\n";
-      List.iter (fun p -> Printf.printf "%s\n" 
-                    @@ P.to_string p) (snd st);
+      VC.print (fst st, snd st, P.of_sv @@ SV.ConstBool true);
       Printf.printf "---- VCs ----\n";
-      let print_vc (te,antePs,conseqP) = 
-        begin
-          TE.print te;
-          List.iter (fun p -> 
-                       Printf.printf "/\\ \t %s\n" 
-                         (P.to_string p)) antePs;
-          print_string "=>";
-          Printf.printf "\t%s\n" (P.to_string conseqP);
-        end in
-        List.iter print_vc vcs;
+      VC.print_all vcs;
       Printf.printf "body_sv:\n %s\n" (SV.to_string body_sv);
     end
 

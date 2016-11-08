@@ -64,7 +64,7 @@ let (++) x f = f x
 let implementation ppf sourcefile outputprefix =
   Compmisc.init_path false;
   let modulename = module_of_filename ppf sourcefile outputprefix in
-  let _ = Printf.printf "implementation: %s\n" sourcefile in
+  (* let _ = Printf.printf "implementation: %s\n" sourcefile in*)
   Env.set_unit_name modulename;
   let env = Compmisc.initial_env() in
   let is_app_mod sourcefile = 
@@ -83,19 +83,21 @@ let implementation ppf sourcefile outputprefix =
     let rdt_spec = if is_app_mod sourcefile 
                    then Some (Rdtextract.doIt ppf typedtree) 
                    else None in
-    let _ = Printf.printf "RDT spec extracted\n" in
     let env = match rdt_spec with | None -> None
       | Some spec -> Some (Specelab.doIt spec) in
     let _ = match (rdt_spec,env) with 
       | (Some rdt_spec, Some (ke,te,ve)) -> 
           let open Specelab in 
             begin
+              (*
               Printf.printf "----- Kind Env ----\n";
               KE.print ke;
               Printf.printf "----- Type Env ----\n";
               TE.print te;
               Printf.printf "----- Val Env ----\n";
               VE.print ve;
+               *)
+              ()
             end 
       | _ -> ()  in
     let _ = match (rdt_spec,env) with 
