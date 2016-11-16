@@ -95,6 +95,7 @@ struct
   let isNone = Ident.create "isNone"
   let fromJust = Ident.create "fromJust"
   let nop = Ident.create "Nop"
+  let show = Ident.create "show"
 end
 
 module SymbolicVal = 
@@ -214,6 +215,10 @@ struct
       | And [sv] -> sv
       | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
           And (List.filter (fun sv -> not (assumps |= sv)) svs)
+      | And svs when (List.exists (function (And _) -> true
+                                     | _ -> false) svs) ->
+          And (List.concat @@ List.map (function (And svs') -> svs'
+                                          | sv -> [sv]) svs)
       | And svs -> 
           let do_simplify sv = 
             simplify ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
@@ -222,6 +227,21 @@ struct
           let all_same = List.fold_left (&&) true same in 
             if all_same then gv 
             else simplify assumps @@ And svs'
+      | Or [] -> ConstBool true
+      | Or [sv] -> sv
+      | Or svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
+          ConstBool true
+      | Or svs when (List.exists (function (Or _) -> true
+                                     | _ -> false) svs) ->
+          Or(List.concat @@ List.map (function (Or svs') -> svs'
+                                          | sv -> [sv]) svs)
+      | Or svs -> 
+          let do_simplify sv = simplify assumps sv in
+          let svs' = List.map do_simplify svs in
+          let same = List.map2 (=) svs svs' in
+          let all_same = List.fold_left (&&) true same in 
+            if all_same then gv 
+            else simplify assumps @@ Or svs'
       | Eq (v1,v2) when (v1 = v2) -> ConstBool true
       | Eq (v1,v2) -> 
           let (v1',v2') = (simplify assumps v1, simplify assumps v2) in
@@ -241,19 +261,21 @@ module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
     | If of t * t 
+    | Iff of t * t 
     | Forall of (Ident.t * Type.t) list * t
     | Exists of (Ident.t * Type.t) list * t
 
-  module SV = SymbolicVal
+  module S = SymbolicVal
 
-  let of_sv sv = BoolExpr (SV.simplify [] sv)
+  let of_sv sv = BoolExpr (S.simplify [] sv)
 
   let of_svs svs = match svs with
-    | [] -> BoolExpr (SV.ConstBool true)
-    | _ -> BoolExpr (SV.simplify [] @@ SV.And svs)
+    | [] -> BoolExpr (S.ConstBool true)
+    | _ -> BoolExpr (S.simplify [] @@ S.And svs)
 
-  let rec to_string = function BoolExpr sv -> SV.to_string sv
+  let rec to_string = function BoolExpr sv -> S.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
+    | Iff (v1,v2) -> (to_string v1)^" <=> "^(to_string v2)
     | Forall (bvs, t) -> 
         "∀("^(String.concat "," @@ 
                 List.map (fun (id,ty) -> 
@@ -266,14 +288,16 @@ struct
     | _ -> failwith "P.to_string Unimpl."
 
   let _if (t1,t2) = match (t1,t2) with
-    | (BoolExpr (SV.ConstBool true), _) -> t2
+    | (BoolExpr (S.ConstBool true), _) -> t2
     | (BoolExpr v1, BoolExpr v2)  -> 
-        let v1' = SV.simplify [] v1 in
-          if v1' = SV.ConstBool false 
-          then BoolExpr (SV.ConstBool true)
-          else let v2' = SV.simplify [v1'] v2 in
+        let v1' = S.simplify [] v1 in
+          if v1' = S.ConstBool false 
+          then BoolExpr (S.ConstBool true)
+          else let v2' = S.simplify [v1'] v2 in
                   If (BoolExpr v1', BoolExpr v2')
     | _ -> If (t1,t2)
+
+  let _iff (t1,t2) = Iff (t1,t2)
 end
 
 module Misc =

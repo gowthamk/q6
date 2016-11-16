@@ -32,6 +32,14 @@ struct
     | x::xs -> (match x with 
                   | None -> first_some xs
                   | Some _ -> x)
+
+  let rec forall l f = match l with
+    | [] -> true
+    | x::xs -> (f x)&&(forall xs f)
+
+  let rec exists l f = match l with
+    | [] -> false
+    | x::xs -> (f x)||(exists xs f)
 end
 
 module L =
@@ -183,13 +191,19 @@ let get_tweet tid =
   let res = List.first_some tweets in
     res
 
-let inv_fkey uid = 
-  L.forall (Userline_table.get uid (Userline.Get))
+let inv_fkey uid' = 
+  List.forall (Userline_table.get uid' (Userline.Get))
     (fun e -> match e with
-       | Some (Userline.NewTweet {tweet_id=tid}) -> 
-           L.exists (Tweet_table.get tid Tweet.Get)
-             (fun e' -> match e' with
-                | Some (Tweet.New _) -> true | _ -> false)
+       | Some x -> 
+           (match x with 
+              | Userline.NewTweet {tweet_id=tid} -> 
+                  List.exists (Tweet_table.get tid Tweet.Get) 
+                    (fun e' -> match e' with 
+                       | Some y -> (match y with 
+                                      | (Tweet.New _) -> true 
+                                      | _ -> false)
+                       | _ -> false)
+              | _ -> false)
        | _ -> true)
 
 let get_userline uid = 
