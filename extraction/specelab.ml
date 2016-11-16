@@ -141,7 +141,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
     let id = Ident.create @@ "mkKey_"^(Type.to_string typ) in
       TE.add id refTy te in
   let add_mkKeys te = List.fold_left add_mkKey_for_type te id_types in
-  (* 9. Add all funs to VE *)
+  (* 9. Add reads, writes and aux funs to VE *)
   let add_funs ve = List.fold_left 
                       (fun ve (Fun.T {name} as fun_t) -> 
                         VE.add name (SV.Fun fun_t) ve) 

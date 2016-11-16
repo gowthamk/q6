@@ -21,6 +21,7 @@ end
 
 type t = T of {schemas: (Ident.t * Tableschema.t) list;
                reads: Fun.t list; 
-               writes : Fun.t list; 
+               writes : Fun.t list;
+               invs: Fun.t list;
                aux: Fun.t list}
-let make ~schemas ~reads ~writes ~aux = T {schemas; reads; writes; aux}
+let make ~schemas ~reads ~writes ~invs ~aux = T {schemas; reads; invs; writes; aux}

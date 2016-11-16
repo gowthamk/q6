@@ -5,6 +5,6 @@ sig
 end
 module Make : functor(Table : TABLE_TYPE) ->
 sig
-  val get : Table.id -> Table.eff -> Table.eff list
+  val get : Table.id -> Table.eff -> Table.eff option list
   val append : Table.id -> Table.eff -> unit
 end

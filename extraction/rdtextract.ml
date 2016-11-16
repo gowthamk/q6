@@ -129,7 +129,7 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
     Tableschema.make ~id_t: id_t ~eff_t:eff_t
 
 let extract_funs (str_items) = 
-  let (reads, writes, aux) = (ref [], ref [], ref []) in
+  let (reads, writes, invs, aux) = (ref [], ref [], ref [], ref []) in
   let open Asttypes in
   let doIt_valbind rec_flag {vb_pat; vb_expr} = 
     match (vb_pat.pat_desc, vb_expr.exp_desc) with 
@@ -149,6 +149,9 @@ let extract_funs (str_items) =
             else if String.length loc.txt >= 3 && 
                     Str.string_before loc.txt 3 = "do_" then
               writes := (mk_fun ())::!writes
+            else if String.length loc.txt >= 4 && 
+                    Str.string_before loc.txt 4 = "inv_" then
+              invs := (mk_fun ())::!invs
             else aux := (mk_fun ())::!aux
       | _ -> () in
     begin
@@ -160,7 +163,7 @@ let extract_funs (str_items) =
                          | Recursive -> true in
                          List.iter (doIt_valbind rec_flag) valbinds
                    | _ -> ()) str_items;
-      (!reads, !writes, !aux)
+      (!reads, !writes, !invs, !aux)
     end
 
 let extract_aux_mods str_items ttype_names = 
@@ -195,7 +198,7 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
                            let schema = schema_of_mod ppf mod_name mod_exp in
                             (mod_name, schema)) 
                         ttype_mods in
-  let (reads,writes,aux) = extract_funs str_items in
+  let (reads,writes,invs,aux) = extract_funs str_items in
   let aux_mods = extract_aux_mods str_items ttype_names in
   let new_aux = 
     List.concat @@ List.map
@@ -206,12 +209,12 @@ let doIt ppf ({str_items; str_type; str_final_env}) =
           let rename_fun (Fun.T fun_t) =  
             Fun.T {fun_t with name = Ident.create @@ 
                               mod_name^"."^(Ident.name fun_t.name)} in
-          let (x,y,z) = extract_funs str_items in
-          let new_funs = List.map rename_fun (x @ y @ z) in
+          let (x,y,i,z) = extract_funs str_items in
+          let new_funs = List.map rename_fun (x @ y @ i @ z) in
             new_funs) aux_mods in
   let print_fname (name,expr) = Printf.printf "%s\n" name in
   let rdt_spec = Rdtspec.make ~schemas: ttype_schemas ~reads: reads
-                   ~writes:writes ~aux:(aux @ new_aux) in
+                   ~writes:writes ~aux:(aux @ new_aux) ~invs:invs in
     begin
       rdt_spec
      (* print_string "Reads:\n";

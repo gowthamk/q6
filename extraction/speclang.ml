@@ -23,7 +23,9 @@ struct
   let eff = other "Eff"
   let ssn = other "Ssn"
   let is_oper t = (t = oper)
-  let is_eff t = (t = eff)
+  let is_eff t = 
+    let _ = Printf.printf "is_eff(%s)\n" (to_string t) in 
+      (t = eff)
 end
 
 module Cons = 
@@ -160,28 +162,75 @@ struct
 
   let some x = Option (Some x)
 
+  (*
+   * Does a follow from assumps?
+   *)
+  let rec (|=) assumps a = 
+    let assumps = List.concat @@ List.map 
+                                   (function (And x) -> x 
+                                      | x -> [x]) assumps in
+      match a with 
+        | _ when (List.mem (ConstBool false) assumps || 
+                  List.mem a assumps) -> true
+        | ConstBool true -> true
+        | And vs -> List.for_all (fun v -> assumps |= v) vs
+        | Or vs -> List.exists (fun v -> assumps |= v) vs
+        | _ -> false
+  (*
+   * Simplifies gv by applying algebraic rules until fixpoint.
+   * Returns a gv' s.t., (assumps |- gv' <=> gv) and 
+   * size(gv') ≤ size(gv). 
+   *)
   let rec simplify assumps gv = 
-    (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
     match gv with
+      (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
       | App (_isSome, [ITE (a, 
                             Option (Some b), 
                             Option None)])
-        when (_isSome = L.isSome) -> simplify assumps a
+        when (_isSome = L.isSome) -> a
       | App (_fromJust, [Option (Some a)])
-        when (_fromJust = L.fromJust) -> simplify assumps a
+        when (_fromJust = L.fromJust) -> a
       | App (f,v2s) -> 
           let v2s' = List.map (simplify assumps) v2s in
           let same = List.map2 (=) v2s v2s' in
           let all_same = List.fold_left (&&) true same in 
-            if not all_same then simplify assumps (App (f, v2s'))
-            else App (f,v2s)
-      | ITE (a,b,c) -> if List.mem a assumps 
-                       then simplify assumps b 
-                       else if List.mem (Not a) assumps 
-                       then simplify assumps b
-                       else ITE (simplify assumps a, 
-                                 simplify (a::assumps) b, 
-                                 simplify ((Not a)::assumps) c)
+            if all_same then gv 
+            else simplify assumps (App (f, v2s'))
+      | ITE (a,b,c) when (assumps |= a) -> b
+      | ITE (a,b,c) when (assumps |= (Not a)) -> c
+      | ITE (a, ITE (b,c,d), e) when (d = e) -> 
+          let c' = simplify (a::b::assumps) c in 
+            ITE (And [a;b], c', d)
+      | ITE (a,b,c) -> 
+          let a' = simplify assumps a in
+          let b' = simplify (a::assumps) b in 
+          let c' = simplify ((Not a)::assumps) c in
+            if a'=a && b'=b && c'=c then gv
+            else simplify assumps @@ ITE (a',b',c')
+      | Option (Some a) -> 
+          let a' = simplify assumps a in
+            if a'= a then gv else simplify assumps @@ Option (Some a')
+      | And [] -> ConstBool true
+      | And [sv] -> sv
+      | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
+          And (List.filter (fun sv -> not (assumps |= sv)) svs)
+      | And svs -> 
+          let do_simplify sv = 
+            simplify ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
+          let svs' = List.map do_simplify svs in
+          let same = List.map2 (=) svs svs' in
+          let all_same = List.fold_left (&&) true same in 
+            if all_same then gv 
+            else simplify assumps @@ And svs'
+      | Eq (v1,v2) when (v1 = v2) -> ConstBool true
+      | Eq (v1,v2) -> 
+          let (v1',v2') = (simplify assumps v1, simplify assumps v2) in
+            if v1'=v1 && v2'=v2 then gv 
+            else simplify assumps @@ Eq (v1',v2') 
+      | Not (ConstBool true) -> ConstBool false
+      | Not (ConstBool false) -> ConstBool true
+      | Not v -> let v' = simplify assumps v in 
+          if v'=v then gv else simplify assumps @@ Not v'
       | _ -> gv
 
   let ite (v1,v2,v3) = simplify [] @@ ITE (v1,v2,v3)
@@ -192,35 +241,38 @@ module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
     | If of t * t 
-    | Forall of ((Ident.t * Type.t) list -> t)
+    | Forall of (Ident.t * Type.t) list * t
+    | Exists of (Ident.t * Type.t) list * t
 
   module SV = SymbolicVal
 
-  let of_sv sv = match sv with
-    | SV.And [v] -> BoolExpr v
-    | SV.Not (SV.And [v]) -> BoolExpr (SV.Not v) 
-    | SV.Not (SV.And []) -> BoolExpr (SV.ConstBool false)
-    | SV.Not (SV.ConstBool true) -> BoolExpr (SV.ConstBool false)
-    | SV.Not (SV.ConstBool false) -> BoolExpr (SV.ConstBool true)
-    | _ -> BoolExpr sv
+  let of_sv sv = BoolExpr (SV.simplify [] sv)
 
   let of_svs svs = match svs with
     | [] -> BoolExpr (SV.ConstBool true)
-    | [v] -> BoolExpr v
-    | _ -> BoolExpr (SV.And svs)
+    | _ -> BoolExpr (SV.simplify [] @@ SV.And svs)
 
   let rec to_string = function BoolExpr sv -> SV.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
+    | Forall (bvs, t) -> 
+        "∀("^(String.concat "," @@ 
+                List.map (fun (id,ty) -> 
+                            (Ident.name id)^":"^(Type.to_string ty)) bvs)
+        ^"). "^(to_string t)
+    | Forall (bvs, t) -> 
+        "∃("^(String.concat "," @@ 
+                List.map (fun (id,ty) -> 
+                            (Ident.name id)^":"^(Type.to_string ty)) bvs)
     | _ -> failwith "P.to_string Unimpl."
 
   let _if (t1,t2) = match (t1,t2) with
-    | (BoolExpr (SV.ConstBool true), BoolExpr v2) -> 
-         BoolExpr (SV.simplify [] v2)
-    | (BoolExpr (SV.ConstBool false), BoolExpr v2) -> 
-         BoolExpr (SV.ConstBool true)
+    | (BoolExpr (SV.ConstBool true), _) -> t2
     | (BoolExpr v1, BoolExpr v2)  -> 
-        let (v1',v2') = (SV.simplify [] v1, SV.simplify [v1] v2) in
-          If (BoolExpr v1', BoolExpr v2')
+        let v1' = SV.simplify [] v1 in
+          if v1' = SV.ConstBool false 
+          then BoolExpr (SV.ConstBool true)
+          else let v2' = SV.simplify [v1'] v2 in
+                  If (BoolExpr v1', BoolExpr v2')
     | _ -> If (t1,t2)
 end
 
@@ -307,14 +359,14 @@ struct
 
   let unify_tyes tye1 tye2 = 
     let tyebinds = unify_tyes [] tye1 tye2 in
-    (* let strf = Format.str_formatter in
+    (*let strf = Format.str_formatter in
     let print_bind (a,tye) = 
       begin
         Format.fprintf strf "%s :-> " a;
-        Printtyp.type_expr strf tye.desc;
+        Printtyp.type_expr strf tye;
         Printf.printf "%s\n" @@ Format.flush_str_formatter ()
       end in
-    let _ = List.iter print_bind tyebinds in *)
+    let _ = List.iter print_bind tyebinds in*)
       tyebinds
 
 end

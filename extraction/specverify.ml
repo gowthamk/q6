@@ -40,6 +40,7 @@ let printf = Printf.printf
  * OMGWTFBMC bound
  *)
 let k =ref 2 (* will be overridden in doIt *)
+let eff_consts = ref [] (* will be overridden in doIt *)
 
 let not_found msg = (Printf.printf "%s\n" msg; raise Not_found)
 
@@ -51,9 +52,14 @@ let is_some_pat = function
     (Tpat_construct (_,{cstr_name},_)) -> cstr_name = "Some"
   | _ -> false
 
+let is_wild_pat = function Tpat_any -> true | _ -> false
+
 let find_none_case cases = try List.find (fun case -> 
                             is_none_pat case.c_lhs.pat_desc) cases
-                           with Not_found -> not_found "None case not found"
+                           with Not_found -> 
+                             try List.find (fun case -> 
+                                  is_wild_pat case.c_lhs.pat_desc) cases 
+                             with Not_found -> not_found "None case not found"
 
 let find_some_case cases = try List.find (fun case -> 
                             is_some_pat case.c_lhs.pat_desc) cases
@@ -98,58 +104,63 @@ let mk_vc env grd =
 let rec type_of_tye ke (tye : type_expr) = 
   let open Path in
   let open Types in
-  let f = type_of_tye ke in
-    match tye.desc with
-      | Tvar aop -> 
-        let a_name = Misc.mk_tvar_name aop tye.id in
-        let msg = "Kind of %s not found" in
-        let knd = try KE.find_name a_name ke 
-                  with Not_found -> not_found msg in
-          (match knd with | Kind.Alias typ -> typ
-            | _ -> failwith "type_of_tye: Unexpected")
-      | Tarrow (_,te1,te2,_) -> Type.Arrow (f te1, f te2)
-      | Ttuple [te1;te2] -> Type.Pair (f te1, f te2)
-      | Tconstr (Pdot (Pident id,"t",_),[te],_) 
-        when (Ident.name id = "List") -> Type.List (f te)
-      | Tconstr (Pident id,[te],_) 
-        when (Ident.name id = "list") -> Type.List (f te)
-      | Tconstr (Pident id,[te],_) 
-        when (Ident.name id = "option") -> Type.Option (f te)
-      | Tconstr (Pident id,[],_) 
-        when (Ident.name id = "string") -> Type.String
-      | Tconstr (Pident id,[],_) 
-        when (Ident.name id = "int") -> Type.Int
-      | Tconstr (Pident id,[],_) 
-        when (Ident.name id = "bool") -> Type.Bool
-      | Tconstr (Pident id,[],_) 
-        when (Ident.name id = "unit") -> Type.Unit
-      | Tconstr (Pdot (Pident id,"t",_),[],_) 
-        when (Ident.name id = "Uuid") -> Type.uuid
-      | Tconstr (Pdot (Pident id,"eff",l),[],s) ->
-          (* If there exists an id type for this module, 
-           * then this must be a TABLE_TYPE module.  *)
-          begin
-            try f {desc=Tconstr (Pdot (Pident id,"id",l),[],s);
-                   id=tye.id; level=tye.level} 
-            with Not_found -> failwith "Unknown eff type";
-            Type.oper
-          end
-      | Tconstr (Pdot (Pident id,t,_),[],_)  ->
-          let alias = (Ident.name id)^"."^t in
-          let Kind.Alias typ = try KE.find_name alias ke 
-                    with Not_found -> 
-                      not_found ("Type "^alias^" unknown\n") in
-            typ
-      | Tlink te -> f te
-      | Tconstr (Pdot (Pident id,s,_),[],_)  ->
-          let _ = Printf.printf "Unknown Tconstr %s.%s\n" 
-                    (Ident.name id) s in
-          let _ = Printtyp.type_expr ppf tye  in
-            failwith "Unimpl."
-      | _ -> 
-          let _ = Printf.printf "Unknown type\n" in
-          let _ = Printtyp.type_expr ppf tye in
-            failwith "Unimpl."
+  (*let strf = Format.str_formatter in
+  let _ = Printtyp.type_expr strf tye in
+  let _ = printf "type_of_tye(%s)\n" @@ 
+            Format.flush_str_formatter () in*)
+  let f = type_of_tye ke in match tye.desc with
+    | Tvar aop -> 
+      let a_name = Misc.mk_tvar_name aop tye.id in
+      (*let _ = printf "type_of_tye(%s)\n" a_name in*)
+      let msg = "Kind of %s not found" in
+      let knd = try KE.find_name a_name ke 
+                with Not_found -> not_found msg in
+        (match knd with | Kind.Alias typ -> typ
+          | _ -> failwith "type_of_tye: Unexpected")
+    | Tarrow (_,te1,te2,_) -> Type.Arrow (f te1, f te2)
+    | Ttuple [te1;te2] -> Type.Pair (f te1, f te2)
+    | Tconstr (Pdot (Pident id,"t",_),[te],_) 
+      when (Ident.name id = "List") -> Type.List (f te)
+    | Tconstr (Pident id,[te],_) 
+      when (Ident.name id = "list") -> Type.List (f te)
+    | Tconstr (Pident id,[te],_) 
+      when (Ident.name id = "option") -> Type.Option (f te)
+    | Tconstr (Pident id,[],_) 
+      when (Ident.name id = "string") -> Type.String
+    | Tconstr (Pident id,[],_) 
+      when (Ident.name id = "int") -> Type.Int
+    | Tconstr (Pident id,[],_) 
+      when (Ident.name id = "bool") -> Type.Bool
+    | Tconstr (Pident id,[],_) 
+      when (Ident.name id = "unit") -> Type.Unit
+    | Tconstr (Pdot (Pident id,"t",_),[],_) 
+      when (Ident.name id = "Uuid") -> Type.uuid
+    | Tconstr (Pdot (Pident id,"eff",l),[],s) ->
+        (* If there exists an id type for this module, 
+         * then this must be a TABLE_TYPE module.  *)
+        begin
+          (try ignore @@ 
+               f {desc=Tconstr (Pdot (Pident id,"id",l),[],s);
+                  id=tye.id; level=tye.level} 
+           with Not_found -> failwith "Unknown eff type");
+          Type.eff
+        end
+    | Tconstr (Pdot (Pident id,t,_),[],_)  ->
+        let alias = (Ident.name id)^"."^t in
+        let Kind.Alias typ = try KE.find_name alias ke 
+                  with Not_found -> 
+                    not_found ("Type "^alias^" unknown\n") in
+          typ
+    | Tlink te -> f te
+    | Tconstr (Pdot (Pident id,s,_),[],_)  ->
+        let _ = Printf.printf "Unknown Tconstr %s.%s\n" 
+                  (Ident.name id) s in
+        let _ = Printtyp.type_expr ppf tye  in
+          failwith "Unimpl."
+    | _ -> 
+        let _ = Printf.printf "Unknown type\n" in
+        let _ = Printtyp.type_expr ppf tye in
+          failwith "Unimpl."
 
 let map_snd_opts = List.map (function (_,Some x) -> x
                                | _ -> failwith "Unexpected")
@@ -163,7 +174,7 @@ let fresh_eff_name = gen_name "!e"
 let fresh_name = gen_name "!v"
 let fresh_uuid_name = gen_name "!uuid"
 
-let mk_new_effect env (sv1,ty1) sv2 =
+let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
   let sv_y = SV.Var y in
   let (Cons.T cons_t,args) = let open SV in match sv2 with 
@@ -185,7 +196,7 @@ let mk_new_effect env (sv1,ty1) sv2 =
   let doIt_arg (arg_id,arg_sv) = SV.Eq (SV.App (arg_id, [sv_y]), 
                                         arg_sv) in
   let phis_4 = List.map doIt_arg args in
-  (* For the new effect, phi_1 to phi_4 are true only under 
+  (* For the new effect, phi_1 to phis_4 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ SV.And ([phi_1; phi_2; phi_3]@phis_4)in
@@ -214,30 +225,27 @@ let doIt_append env typed_sv1 sv2 =
 
 let doIt_get env typed_sv1 sv2 = 
   let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
-  let ys = List.tabulate !k 
-             (fun _ -> Ident.create @@ fresh_eff_name ()) in
   let vis (id1,id2) = SV.App (L.vis, [SV.Var id1;
                                       SV.Var id2]) in
-  let vis_preds = List.map (fun yi -> vis(yi,y)) ys in
-  let visp = P.of_sv @@ SV.And vis_preds in
-  (* Only under the current branch is visp true *)
-  let tcond = P.of_svs env.path in
-  let ys_p = P._if (tcond, visp) in
+  let vis_grd (id1,id2) = SV.ITE (vis (id1,id2), 
+                                  SV.Option (Some (SV.Var id1)), 
+                                  SV.Option None) in
+  (*
+   * E.g: [vis(E0,!e0)? Some E0 : None; vis(E1,!e0)? Some E1 : None]
+   *)
+  let ys = List.map (fun eff -> vis_grd (eff,y)) !eff_consts in
   (* Since vis(a,b) => samobj(a,b) => objid(a) = objid(b), we 
    * don't have to assert it separately. *)
-  let te' = List.fold_left (fun te y -> TE.add y Type.eff te)
-              env.te (y::ys) in
   (* 
    * ys is the manifest prefix. We also need to create a list 
    * variable to serve as the unmanifest suffix.
    *)
   let l = Ident.create @@ fresh_name () in
-  let te'' = TE.add l (Type.List Type.eff) te' in
-  let pe' = env.pe @ y_ps @ [ys_p] in
+  let te' = TE.add l (Type.List Type.eff) (TE.add y Type.eff env.te) in
+  let pe' = env.pe @ y_ps in
   let seqno' = env.seqno + 1 in
-  let env' = {env with seqno=seqno'; te=te''; pe=pe'} in
-  let ret_sv = SV.List (List.map (fun yi -> SV.Var yi) ys, 
-                        Some (SV.Var l)) in
+  let env' = {env with seqno=seqno'; te=te'; pe=pe'} in
+  let ret_sv = SV.List (ys, Some (SV.Var l)) in
     (ret_sv,env')
 
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
@@ -327,6 +335,12 @@ and doIt_expr env (expr:Typedtree.expression)
         let (arg_sv2, env'', vcs2) = doIt_expr env' arge2 in
         let sv = SV.cons (arg_sv1,arg_sv2) in
           (sv,env'',vcs1@vcs2)
+    (* true *)
+    | Texp_construct (_,cons_desc, [])
+      when (cons_desc.cstr_name = "true") -> ret (SV.ConstBool true)
+    (* false *)
+    | Texp_construct (_,cons_desc, [])
+      when (cons_desc.cstr_name = "false") -> ret (SV.ConstBool false)
     (* [] *)
     | Texp_construct (_,cons_desc, [])
       when (cons_desc.cstr_name = "[]") -> ret (SV.nil)
@@ -385,6 +399,57 @@ and doIt_expr env (expr:Typedtree.expression)
         let typ1 = type_of_tye env.ke e1.exp_type in
         let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
           (effs_sv, env'', vcs)
+    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
+                  args) when (List.length args <> 2) ->
+        failwith @@ (Ident.name id)^".get needs 2 arguments"
+    (* L.forall [...] (\x.e) *)
+    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"forall",_),_,_)},
+                  [(Asttypes.Nolabel,Some e1); 
+                   (Asttypes.Nolabel,Some e2)]) when (Ident.name id = "L") -> 
+        let (sv1, env',vcs1) = doIt_expr env e1 in
+        let (sv2,env'',vcs2) = doIt_expr env' e2 in
+        let (effs, Fun.T {args_t; body}) = match (sv1,sv2) with
+          | (SV.List (effs, Some _), SV.Fun fun_t) -> (effs,fun_t) 
+          | _ -> failwith "Texp_apply (L.forall): Unexpected" in
+        let bv = match args_t with 
+          | [(bv, bvty)] -> bv 
+          | _ -> failwith "Texp_apply (L.forall): Unexpected" in
+        let env = {env'' with te = TE.add bv Type.eff env''.te} in
+        let (body_sv, env', _) = doIt_expr env body in
+        let pre = P.of_sv @@ SV.And (List.map 
+                                        (fun eff -> 
+                                           SV.Eq (SV.Var bv, eff)) 
+                                        effs) in
+        let forall = P.Forall ([bv,Type.eff], 
+                               P._if (pre,P.of_sv body_sv)) in
+        (* let b = Ident.create @@ fresh_name () in *)
+        let conseqP = forall (* && b *) in
+        let new_vc = (env'.te, env'.pe, conseqP) in
+          (body_sv, env', [new_vc]) 
+     (* L.exists [...] (\x.e) *)
+    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"exists",_),_,_)},
+                  [(Asttypes.Nolabel,Some e1); 
+                   (Asttypes.Nolabel,Some e2)]) when (Ident.name id = "L") -> 
+        let (sv1, env',_) = doIt_expr env e1 in
+        let (sv2,env'',_) = doIt_expr env' e2 in
+        let (effs, Fun.T {args_t; body}) = match (sv1,sv2) with
+          | (SV.List (effs, Some _), SV.Fun fun_t) -> (effs,fun_t) 
+          | _ -> failwith "Texp_apply (L.exists): Unexpected" in
+        let bv = match args_t with 
+          | [(bv, bvty)] -> bv 
+          | _ -> failwith "Texp_apply (L.exists): Unexpected" in
+        let env = {env'' with te = TE.add bv Type.eff env''.te} in
+        let (body_sv, env', _) = doIt_expr env body in
+        let pre = P.of_sv @@ SV.And (List.map 
+                                        (fun eff -> 
+                                           SV.Eq (SV.Var bv, eff)) 
+                                        effs) in
+        let exists = P.Exists ([bv,Type.eff], 
+                               P._if (pre,P.of_sv body_sv)) in
+        (* let b = Ident.create @@ fresh_name () in *)
+        let conseqP = exists (* || b *) in
+        let new_vc = (env'.te, env'.pe, conseqP) in
+          (body_sv, env', [new_vc]) 
     (* f e *) (* (\x.e) e *)
     | Texp_apply (e1, largs) -> 
         let strf = Format.str_formatter in
@@ -466,26 +531,28 @@ and doIt_expr env (expr:Typedtree.expression)
         let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
         let exptyp = type_of_tye env.ke expr.exp_type in
         let scrutyp = type_of_tye env.ke scrutinee.exp_type in
-        (*let _ = Printf.printf "Type of the match expression:\n" in
-        let _ = Printf.printf "%s\n" @@ Type.to_string exptyp in*)
+        (*let strf = Format.str_formatter in
+        let _ = Printtyp.type_expr strf expr.exp_type in
+        let _ = Printf.printf "Type of the match expression:%s = %s\n" 
+                  (Format.flush_str_formatter ()) (Type.to_string exptyp) in
+        let _ = Printtyp.type_expr strf scrutinee.exp_type in
+        let _ = Printf.printf "Type of scrutinee: %s = %s\n" 
+                  (Format.flush_str_formatter ()) (Type.to_string scrutyp) in*)
         let (sv,env'',vcs2)  = let open SV in match scru_sv with
+          (* List and Option are special cases where the interpreter 
+           * does some the reasoning. *)
           | List ([],Some l) -> 
               let _ = print_string "unmanifest during match\n" in
               let x = Ident.create @@ fresh_name () in
               let xte = TE.add x exptyp env'.te in
                 (SV.Var x, {env' with te=xte}, [])
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
+          | Option op -> doIt_option_cases env' op cases 
           | NewEff (Cons.T cons_t, argop) -> 
               failwith "Texp_match NewEff Unimpl."
-          | Var id -> 
-              let name = Ident.name id in
-              let typ = TE.find_name name env.te in
-              let _ = if Type.is_eff typ then ()
-                      else failwith "Scrutinee is non-eff var" in
-                doIt_eff_cases env id cases
-          | Option op -> doIt_option_cases env' op cases 
           | Record fields -> 
               failwith "Texp_match Record Unimpl."
+          (* In other cases, we let the solver do the reasoning *)
           | _ -> doIt_sv_cases env' scru_sv scrutyp cases in
           (sv,env'',vcs1 @ vcs2)
     | Texp_match (_,_,ex_cases,_) -> 
@@ -523,45 +590,45 @@ and doIt_expr env (expr:Typedtree.expression)
           (sv, env3, vcs1 @ vcs2 @ vcs3)
     | _ -> failwith "Unimpl. expr"
 
-and doIt_sv_cases env scru typ cases = 
-  let open Type in match typ with
-    | Option _ -> 
-        (* 1. Some case *)
-        let some_grd = SV.app (L.isSome,[scru]) in
-        let none_grd = SV.Not some_grd in
-        let some_val = SV.app (L.fromJust, [scru]) in
-        let (some_sv_op,env',vcs1) = 
-          try 
-            let doIt env = doIt_option_cases env 
-                             (Some some_val) cases in
-            let (some_sv,env',vcs1) = doIt_under_grd env some_grd doIt in
-              (Some some_sv, env', vcs1)
-          with Inconsistency ->
-            (*
-             * Make a new vc that preempts this branch.
-             *)
-            let (env',new_vc) = mk_vc env none_grd in
-              (None, env', [new_vc]) in
-        (* 2. None case *)
-        let (none_sv_op,env'',vcs2) = 
-          try 
-            let doIt env = doIt_option_cases env None cases in
-            let (none_sv, env'', vcs2) = doIt_under_grd env' 
-                                           none_grd doIt in
-              (Some none_sv, env'', vcs2)
-          with Inconsistency -> 
-            let (env'',new_vc) = mk_vc env' some_grd in
-              (None, env'', [new_vc]) in
-        let sv = match (some_sv_op, none_sv_op) with
-          | (Some some_sv, Some none_sv) -> 
-              SV.ite (some_grd, some_sv, none_sv) 
-          | (Some some_sv, None) -> some_sv 
-          | (None, Some none_sv) -> none_sv
-          | (None, None) -> (* over to the parent branch*) 
-               raise Inconsistency in
-          (sv, env'', vcs1 @ vcs2)
-    | _ -> failwith @@ "doIt_sv_cases Unimpl. for "
-              ^(SV.to_string scru)
+and doIt_sv_cases env scru_sv typ cases = match typ with
+  | Type.Option _ -> 
+      (* 1. Some case *)
+      let some_grd = SV.app (L.isSome,[scru_sv]) in
+      let none_grd = SV.Not some_grd in
+      let some_val = SV.app (L.fromJust, [scru_sv]) in
+      let (some_sv_op,env',vcs1) = 
+        try 
+          let doIt env = doIt_option_cases env 
+                           (Some some_val) cases in
+          let (some_sv,env',vcs1) = doIt_under_grd env some_grd doIt in
+            (Some some_sv, env', vcs1)
+        with Inconsistency ->
+          (*
+           * Make a new vc that preempts this branch.
+           *)
+          let (env',new_vc) = mk_vc env none_grd in
+            (None, env', [new_vc]) in
+      (* 2. None case *)
+      let (none_sv_op,env'',vcs2) = 
+        try 
+          let doIt env = doIt_option_cases env None cases in
+          let (none_sv, env'', vcs2) = doIt_under_grd env' 
+                                         none_grd doIt in
+            (Some none_sv, env'', vcs2)
+        with Inconsistency -> 
+          let (env'',new_vc) = mk_vc env' some_grd in
+            (None, env'', [new_vc]) in
+      let sv = match (some_sv_op, none_sv_op) with
+        | (Some some_sv, Some none_sv) -> 
+            SV.ite (some_grd, some_sv, none_sv) 
+        | (Some some_sv, None) -> some_sv 
+        | (None, Some none_sv) -> none_sv
+        | (None, None) -> (* over to the parent branch*) 
+             raise Inconsistency in
+        (sv, env'', vcs1 @ vcs2)
+  | typ when (Type.is_eff typ) -> doIt_eff_cases env scru_sv cases
+  | _ -> failwith @@ "doIt_sv_cases Unimpl. for "
+            ^(SV.to_string scru_sv)^" : "^(Type.to_string typ)
 
 and doIt_option_cases env op cases = 
   let _ = if List.length cases = 2 then ()
@@ -584,22 +651,22 @@ and doIt_option_cases env op cases =
       | None -> doIt_expr env none_expr
       | Some x_sv -> doIt_some x_sv 
 
-and doIt_eff_case env eff = 
+and doIt_eff_case env eff_sv = 
   function {c_lhs = {pat_desc = Tpat_construct (li_loc,cstr_desc,pats)}; 
             c_rhs = case_expr} ->
     let li = let open Asttypes in li_loc.txt in
     let cstr_name = String.concat "." @@ Longident.flatten li in
     let cons_sv = try VE.find_name cstr_name env.ve
-                  with Not_found -> not_found "cstr not found" in
+                  with Not_found -> 
+                    not_found @@ cstr_name^" cstr not found" in
     let Cons.T cons_t = match cons_sv with | SV.EffCons c -> c
               | _ -> failwith "doIt_eff_case: Unexpected." in
-    let eff_var = SV.Var eff in
     let grd = 
       (* e.g: isUserName_Add(oper(!e2)) *)
-      SV.app (cons_t.recognizer,[SV.app (L.oper,[eff_var])]) in
+      SV.app (cons_t.recognizer,[SV.app (L.oper,[eff_sv])]) in
     let xve_fld_pat ve fld_id fld_pat = match fld_pat.pat_desc with
       | Tpat_var (id,_) -> 
-          let sv = SV.App (fld_id,[eff_var]) in
+          let sv = SV.App (fld_id,[eff_sv]) in
             VE.add id sv ve
       | _ -> failwith "Unexpected record fld match" in
     let xve_fld_pats ve fld_pats = 
@@ -607,7 +674,8 @@ and doIt_eff_case env eff =
         (fun ve (_,ld,pat) -> 
            xve_fld_pat ve (Ident.create ld.lbl_name) pat) 
         ve fld_pats in
-    let xve = match pats with | [] -> env.ve
+    let xve = match pats with 
+      | [] | [{pat_desc = Tpat_any}] -> env.ve
       | [{pat_desc = Tpat_record (fld_pats,_)}] -> 
             xve_fld_pats env.ve fld_pats 
       | _ -> failwith "Unexpected EffCons arg match" in
@@ -622,10 +690,10 @@ and doIt_eff_case env eff =
         ((None,case_sv), {env' with ve=env.ve}, vcs)
   | _ -> failwith "doIt_eff_case: pat-match Unimpl."
 
-and doIt_eff_cases env eff cases = 
+and doIt_eff_cases env eff_sv cases = 
    let (gsvs, (env',vcs)) = List.map_fold_left 
              (fun (env,vcs) case -> 
-                let (gsv,env',new_vcs) = doIt_eff_case env eff case in 
+                let (gsv,env',new_vcs) = doIt_eff_case env eff_sv case in 
                   (gsv,(env',vcs @ new_vcs))) 
              (env,[]) cases in
    let (ifes,elsee) = match List.partition 
@@ -682,27 +750,42 @@ let doIt_fun (env: env) (Fun.T {args_t;body}) =
               env.te args_tys in
   let (body_sv,env',vcs) = doIt_expr {env with te=te'} body in
   let diff_te = env'.te -- env.te in
-  let st = (diff_te, env'.pe) in
+  let st = (diff_te, env'.pe, P.of_sv @@ SV.ConstBool true) in
   let vcs = List.map (fun (te',p1,p2) -> 
                         (te' -- env.te, p1, p2)) vcs in
     begin
       Printf.printf "------- Symbolic Trace -----\n";
-      VC.print (fst st, snd st, P.of_sv @@ SV.ConstBool true);
+      VC.print st;
       Printf.printf "---- VCs ----\n";
       VC.print_all vcs;
       Printf.printf "body_sv:\n %s\n" (SV.to_string body_sv);
+      (body_sv, env', vcs @ [st])
     end
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
   let _ = k := 2 (* k'*) in
-  let Rdtspec.T {schemas; reads; writes; aux} = rdt_spec in
-  let tmp_name =  "do_new_tweet" in
-  let my_fun = try List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = tmp_name)
-                     (writes@reads)
-               with Not_found -> not_found @@ tmp_name
+  let _ = eff_consts := 
+          List.tabulate !k (fun i -> 
+                              Ident.create @@ "E"^(string_of_int i)) in
+  let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
+  let tmp_name1 =  "do_new_tweet" in
+  let tmp_name2 =  "inv_fkey" in
+  let my_fun1 = try List.find (fun (Fun.T x) -> 
+                            Ident.name x.name = tmp_name1)
+                     (writes)
+               with Not_found -> not_found @@ tmp_name1
                     ^" function not found" in
-  let env = {ssn=Fun.name my_fun; seqno=0; 
-             ke=ke; te=te; pe=pe; path=[]; ve=ve} in
-  let _ = doIt_fun env my_fun in
-    failwith "Unimpl. Specverify.doIt"
+  let my_fun2 = try List.find (fun (Fun.T x) -> 
+                            Ident.name x.name = tmp_name2)
+                     (invs)
+               with Not_found -> not_found @@ tmp_name2
+                    ^" function not found" in
+  let env1 = {ssn=Fun.name my_fun1; seqno=0; 
+             ke=ke; pe=pe; path=[]; ve=ve; 
+             te = List.fold_left 
+                    (fun te eff_const -> 
+                       TE.add eff_const Type.eff te) te !eff_consts} in
+  let (_, _, vcs1) = doIt_fun env1 my_fun1 in
+  let (_, _, vcs2) = doIt_fun {env1 with ssn=Fun.name my_fun2} 
+                       my_fun2 in
+    [(Fun.name my_fun1, vcs1); (Fun.name my_fun2, vcs2)]

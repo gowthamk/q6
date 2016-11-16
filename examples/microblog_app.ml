@@ -34,6 +34,11 @@ struct
                   | Some _ -> x)
 end
 
+module L =
+struct
+  let forall l f = true
+  let exists l f = true
+end
 
 module User = 
 struct
@@ -113,7 +118,7 @@ let do_test1 uid name =
   let u2 = UserName_table.get name y in
   let u3 = List.map 
              (fun eff -> match eff with
-                | UserName.Add {user_id=uid'} -> Some uid'
+                | Some (UserName.Add {user_id=uid'}) -> Some uid'
                 | _ -> None) u2 in
   let u4 = List.fold_right (fun idop acc -> match idop with
                              | Some uid' -> uid'::acc
@@ -130,7 +135,7 @@ let do_add_user name pwd =
 let get_user_id_by_name nm = 
   let ctxt = (* ea *) UserName_table.get nm (UserName.GetId) in
   let ids = List.map (fun eff -> match eff with 
-                        | (UserName.Add {user_id=id}) -> Some id 
+                        | Some (UserName.Add {user_id=id}) -> Some id 
                         | _ -> None) ctxt in
   let num_ids = List.fold_right (fun idop acc -> match idop with
                                    | None -> acc
@@ -154,7 +159,10 @@ let do_new_tweet uid str =
   let ctxt = User_table.get uid (User.GetFollowers) in
   let fids = List.map 
                (fun eff -> match eff with 
-                  | (User.AddFollower {follower_id=fid}) -> Some fid
+                  | Some x -> 
+                      (match x with 
+                         | User.AddFollower {follower_id=fid} -> Some fid
+                         | _ -> None)
                   | _ -> None) ctxt in
   let tweet_id = Uuid.create() in
     begin
@@ -170,22 +178,34 @@ let do_new_tweet uid str =
 let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in
   let tweets = List.map (fun eff -> match eff with
-                           | (Tweet.New {content}) -> Some content
+                           | Some (Tweet.New {content}) -> Some content
                            | _ -> None) ctxt in
   let res = List.first_some tweets in
     res
+
+let inv_fkey uid = 
+  L.forall (Userline_table.get uid (Userline.Get))
+    (fun e -> match e with
+       | Some (Userline.NewTweet {tweet_id=tid}) -> 
+           L.exists (Tweet_table.get tid Tweet.Get)
+             (fun e' -> match e' with
+                | Some (Tweet.New _) -> true | _ -> false)
+       | _ -> true)
 
 let get_userline uid = 
   let ctxt = Userline_table.get uid (Userline.Get) in
   let tweets = List.map 
                  (fun x -> match x with 
-                    | (Userline.NewTweet {tweet_id=tid}) -> 
-                        Some (get_tweet tid)
+                    | Some y -> 
+                        (match y with 
+                           | Userline.NewTweet {tweet_id=tid} -> 
+                                Some (get_tweet tid)
+                           | _ -> None)
                     | _ -> None) ctxt in
-  let _ = List.iter (fun top -> match top with 
+  (*let _ = List.iter (fun top -> match top with 
                            | Some x ->  (match x with
                                            | Some _ -> ()
                                            | None -> raise Inconsistency)
                            | None -> ()) 
-            tweets in
+            tweets in*)
     tweets
