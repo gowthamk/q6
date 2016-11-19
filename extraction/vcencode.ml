@@ -54,6 +54,10 @@ let fun_of_str str = try Hashtbl.find fmap str
                       with Not_found ->
                         (printf "%s not found in fmap" str;
                          raise Not_found)
+let const_of_id id = try Hashtbl.find cmap (Ident.name id)
+                     with Not_found ->
+                       (printf "%s not found in cmap" (Ident.name id);
+                        raise Not_found)
 (*
  * Z3 API for the current ctx
  *)
@@ -61,7 +65,7 @@ let sym s = Symbol.mk_string !ctx s
 let mk_app f args = mk_app !ctx f args
 let mk_int_sort () = Int.mk_sort !ctx
 let mk_bool_sort () = Bool.mk_sort !ctx
-let mk_int i = Int.mk_numeral_i !ctx i
+let mk_numeral_i i = Int.mk_numeral_i !ctx i
 let mk_uninterpreted_s s = mk_uninterpreted_s !ctx s
 let mk_const_s str sort = Expr.mk_const_s !ctx str sort
 let mk_constructor_s a b c d e = mk_constructor_s !ctx a b c d e
@@ -71,7 +75,12 @@ let mk_func_decl_s name arg_sorts res_sort =
 let mk_and conjs = mk_and !ctx conjs
 let mk_or conjs = mk_or !ctx conjs
 let mk_eq e1 e2 = mk_eq !ctx e1 e2
+let mk_gt e1 e2 = mk_gt !ctx e1 e2
+let mk_lt e1 e2 = mk_lt !ctx e1 e2
 let mk_not e = mk_not !ctx e
+let mk_true () = mk_true !ctx
+let mk_false () = mk_false !ctx
+let mk_ite e1 e2 e3 = mk_ite !ctx e1 e2 e3
 let _assert e = Solver.add !solver [e]
 let _assert_all e = Solver.add !solver e
 
@@ -86,6 +95,8 @@ let (@<=>) e1 e2 = mk_iff !ctx e1 e2
 let (@&) e1 e2 = mk_and [e1; e2]
 let (@|) e1 e2 = mk_or [e1; e2]
 let (@=) e1 e2 = mk_eq e1 e2
+let (@<) e1 e2 = mk_lt e1 e2
+let (@>) e1 e2 = mk_gt e1 e2
 let (!@) e = mk_not e
 
 let forall sorts f = 
@@ -230,8 +241,42 @@ let assert_axioms () =
                 hb_def1; hb_def2; hb_acyclic] in
     _assert_all asns
 
-let declare_inv inv = 
-  failwith "declare_inv: Unimpl."
+(*
+ * Encoding
+ *)
+module P = Predicate
+module S = SymbolicVal
+
+let rec doIt_sv sv = 
+  let open S in 
+  let f = doIt_sv in 
+    match sv with 
+      | Var id -> const_of_id id
+      | App (id,svs) -> mk_app (fun_of_str @@ Ident.name id)
+                          (List.map f svs) 
+      | Eq (v1,v2) -> (f v1) @= (f v2)
+      | Lt (v1,v2) -> (f v1) @< (f v2)
+      | Gt (v1,v2) -> (f v1) @> (f v2)
+      | Not v -> mk_not @@ f v
+      | And vs -> mk_and @@ List.map f vs
+      | Or vs -> mk_or @@ List.map f vs
+      | ConstInt i -> mk_numeral_i i
+      | ConstBool true -> mk_true ()
+      | ConstBool false -> mk_false ()
+      | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
+      | _ -> failwith "doIt_sv: Unimpl."
+
+let rec doIt_pred p = match p with
+  | P.BoolExpr v -> doIt_sv v
+  | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
+  | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
+  | _ -> failwith "doIt_pred: Unimpl."
+
+let declare_inv (antePs,conseqP) = 
+  let s_inv = mk_const_s "!inv" (sort_of_typ Type.Bool) in
+  let ante = mk_and @@ List.map doIt_pred antePs in
+  let conseq = doIt_pred conseqP in
+    _assert @@ s_inv @<=> (ante @=> conseq)
 
 let discharge (txn_id, vc) = 
   let open VC in
@@ -239,10 +284,10 @@ let discharge (txn_id, vc) =
       declare_types (vc.kbinds, vc.tbinds);
       declare_vars vc.tbinds;
       assert_axioms ();
+      declare_inv vc.inv;
       Printf.printf "*****  CONTEXT ******\n";
       print_string @@ Solver.to_string !solver;
       Printf.printf "\n*********************\n";
-      declare_inv vc.inv;
     end
 
 let doIt vcs = 

@@ -29,9 +29,9 @@
  * But we need id types of various effects to match in order
  * to define sameobj as equality of ids. We overcome the problem 
  * by defining one uninterpreted Id type, and then defining a 
- * seperate mkKey function for each type to convert to Id type. 
- * For instance, mkKey_string converts strings to Ids. All mkKey 
- * functions come with an axiom that if x!=y, then mkKey(x)!=mkKey(y).
+ * seperate mkkey function for each type to convert to Id type. 
+ * For instance, mkkey_string converts strings to Ids. All mkkey 
+ * functions come with an axiom that if x!=y, then mkkey(x)!=mkkey(y).
  *)
 open Rdtspec
 open Speclang
@@ -80,7 +80,7 @@ let extract_oper_cons (schemas) : (Ident.t * Cons.t) list =
                   List.map doIt_schema schemas in
     all_cons
 
-let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) = 
+let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) = 
   (* 1. ObjType typedef to KE *)
   let table_names = List.map fst schemas in
   let add_ObjType = 
@@ -136,13 +136,13 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
                                (fun te (alias,typ) -> 
                                   KE.add alias (Kind.Alias typ) te)
                                te aliased_id_types in
-  (* 8. mkKey functions to TE *)
+  (* 8. mkkey functions to TE *)
   let (_,id_types) = List.split aliased_id_types in
-  let add_mkKey_for_type te typ = 
+  let add_mkkey_for_type te typ = 
     let refTy = Type.Arrow (typ, Type.id) in
-    let id = Ident.create @@ "mkKey_"^(Type.to_string typ) in
+    let id = Ident.create @@ "mkkey_"^(Type.to_string typ) in
       TE.add id refTy te in
-  let add_mkKeys te = List.fold_left add_mkKey_for_type te id_types in
+  let add_mkkeys te = List.fold_left add_mkkey_for_type te id_types in
   (* 9. Add reads, writes and aux funs to VE *)
   let add_funs ve = List.fold_left 
                       (fun ve (Fun.T {name} as fun_t) -> 
@@ -153,7 +153,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
     KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
   (* 11. ssn type def to KE *)
   let add_Ssn ke = 
-    let enums = List.map Fun.name (reads @ writes) in 
+    let enums = List.map Fun.name (invs @ writes) in 
       KE.add (Ident.create "Ssn") (Kind.Enum enums) ke in
   (* 12. ssn function to TE *)
   let add_ssn te = 
@@ -189,15 +189,19 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
       TE.add (L.so) typ @@
       TE.add (L.hb) typ @@
       TE.add (L.sameobj) typ te in
+  (* 17. add show to TE *)
+  let add_show te = 
+    let typ = Type.Arrow (Type.eff, Type.Bool) in
+      TE.add L.show typ te in
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
       [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID;
        add_Ssn] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
-      [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkKeys; 
+      [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
        add_ssn; add_seqno; add_objid; add_objtyp; add_oper; 
-       add_rels] in
+       add_rels; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in

@@ -116,8 +116,8 @@ struct
     | Var of Ident.t
     | App of Ident.t * t list
     | Eq of t * t
-    | GT of t * t
-    | LT of t * t
+    | Gt of t * t
+    | Lt of t * t
     | Not of t
     | And of t list
     | Or of t list
@@ -142,8 +142,8 @@ struct
         | App (id,svs) -> (Ident.name id)^"("
             ^(String.concat "," @@ List.map f svs)^")"
         | Eq (sv1,sv2) -> (f sv1)^" = "^(f sv2)
-        | GT (sv1,sv2) -> (f sv1)^" > "^(f sv2)
-        | LT (sv1,sv2) -> (f sv1)^" < "^(f sv2)
+        | Gt (sv1,sv2) -> (f sv1)^" > "^(f sv2)
+        | Lt (sv1,sv2) -> (f sv1)^" < "^(f sv2)
         | Not sv -> "~("^(f sv)^")"
         | And svs -> "("^(String.concat " && " @@ List.map f svs)^")"
         | Or svs -> "("^(String.concat " || " @@ List.map f svs)^")"
