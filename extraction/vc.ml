@@ -7,7 +7,7 @@ module P = Predicate
 type seq_t = TE.t * Predicate.t list * Predicate.t
 
 (* Verification Condition *)
-type t = {bindings: TE.t; 
+type t = {kbinds:KE.t; tbinds: TE.t; 
           (* program : a set of constraints (on effects) 
            * describing a (write) transaction's operational 
            * behaviour. *)
@@ -40,11 +40,14 @@ let print_seq (te,antePs,conseqP) =
     Printf.printf "\t%s\n" (P.to_string conseqP);
   end
 
-let print {bindings; prog; inv=(antePs,conseqP); pre; post} =
+let print {kbinds; tbinds; prog; inv=(antePs,conseqP); pre; post} =
   begin
     printf "--------- Concurrent VC -------\n";
     printf "\027[38;5;4mbindings {\027[0m\n";
-    TE.print bindings;
+    printf "  \027[38;5;4mkinds\027[0m\n";
+    KE.print kbinds;
+    printf "  \027[38;5;4mtypes\027[0m\n";
+    TE.print tbinds;
     printf "\027[38;5;4m} \027[0m\n";
     printf "\027[38;5;4mpre: \027[0m\n";
     List.iter (fun p -> 

@@ -33,5 +33,13 @@ struct
 
 end
 
+module Str =
+struct
+  include Str
+  let strip_ws s = Str.global_replace (Str.regexp "[\r\n\t ]") "" s
+end
+
 let from_just = function (Some x) -> x
   | None -> failwith "Expected something. Got nothing."
+
+let printf = Printf.printf

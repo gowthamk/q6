@@ -79,6 +79,8 @@ let (--) te1 te2 =
            TE.add id typ diff_te)
       te1 TE.empty
 
+let (++) te1 te2 = TE.fold_name TE.add te2 te1
+
 let doIt_under_grd env grd doIt = 
   let grdp = P.of_sv grd in
   let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
@@ -188,8 +190,9 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let mkkey_ty1 = L.mkkey (Type.to_string ty1) in
   let phi_1 = S.Eq (S.App (L.objid, [sv_y]),
                      S.App (mkkey_ty1, [sv1])) in
+  (* let phi_2 = S.App (cons_t.recognizer,[S.App (L.oper, [sv_y])]) in *)
   let phi_2 = S.Eq (S.App (L.oper, [sv_y]), 
-                     S.Var (cons_t.name)) in
+                    S.Var (cons_t.name)) in
   let objtyp = Ident.create @@ 
                match Str.split (Str.regexp "_") 
                        (Ident.name cons_t.name) with
@@ -205,8 +208,8 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3]@phis_4)in
   let tcondp = P._if (tcond, tconj) in
-  let phi_2' = S.Eq (S.App (L.oper, [sv_y]), 
-                     S.Var L.nop) in
+  let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
+                     S.Var (Cons.name Cons.nop))  in
   (* phi_2' is true anywhere outside the current branch *)
   let fcond = P.of_sv @@ S.Not (S.And env.path) in
   let fcondp = P._if (fcond, P.of_sv phi_2') in
@@ -624,7 +627,8 @@ and doIt_eff_case env eff_sv =
               | _ -> failwith "doIt_eff_case: Unexpected." in
     let grd = 
       (* e.g: isUserName_Add(oper(!e2)) *)
-      S.app (cons_t.recognizer,[S.app (L.oper,[eff_sv])]) in
+      S.Eq (S.App (L.oper,[eff_sv]), 
+            S.Var (cons_t.name)) in
     let xve_fld_pat ve fld_id fld_pat = match fld_pat.pat_desc with
       | Tpat_var (id,_) -> 
           let sv = S.App (fld_id,[eff_sv]) in
@@ -756,24 +760,27 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                with Not_found -> not_found @@ tmp_name2
                     ^" function not found" in
   let env1 = {ssn=Fun.name my_fun1; seqno=0; 
-             ke=ke; pe=pe; path=[]; ve=ve; 
-             show = (fun eff -> S.ConstBool true);
-             te = List.fold_left 
+              ke=KE.add (Ident.create "Eff") 
+                  (Kind.Enum !eff_consts) ke; 
+              pe=pe; path=[]; ve=ve; 
+              show=(fun eff -> S.ConstBool true);
+              te=List.fold_left 
                     (fun te eff_const -> 
                        TE.add eff_const Type.eff te) te !eff_consts} in
-  let (_, _, vcs1) = doIt_fun env1 my_fun1 in
-  let env2 = {env1 with ssn=Fun.name my_fun2; 
+  let (_, env1', vcs1) = doIt_fun env1 my_fun1 in
+  let env2 = {env1 with ssn=Fun.name my_fun2; ke=env1'.ke;
                         show = (fun eff -> 
                                   S.App (L.show, [S.Var eff]))} in
-  let (_, _, vcs2) = doIt_inv env2 my_fun2 in
+  let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
   let ((te1,st_preds,_),(te2,antePs,conseqP)) = 
     match (vcs1,vcs2) with | ([st],[inv_vc]) -> (st,inv_vc)
       | _ -> failwith "Specverify.doIt: Unexpected" in
-  let te = TE.fold_name (fun id ty te -> 
-                             try (ignore @@ TE.find_name (Ident.name id) te;
-                                  failwith @@ (Ident.name id)^" variable \
-                                            duplicate found. Please rename.")
-                             with Not_found -> TE.add id ty te) te2 te1 in
+  let new_te = TE.fold_name 
+                 (fun id ty te -> 
+                    try (ignore @@ TE.find_name (Ident.name id) te; 
+                         failwith @@ (Ident.name id)^" variable \
+                                  duplicate found. Please rename.")
+                    with Not_found -> TE.add id ty te) te2 te1 in
   let pre_show_eff effc = S.Eq (S.App (L.show, [S.Var effc]),
                                  S.Not (S.Eq (S.App (L.ssn, [S.Var effc]),
                                                 S.Var env1.ssn))) in
@@ -781,8 +788,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let post_show_eff effc = S.Eq (S.App (L.show, [S.Var effc]),
                                   S.ConstBool true) in
   let post_show = P.of_sv @@ S.And (List.map post_show_eff !eff_consts) in
-  let conc_vc = let open VC in 
-    {bindings=te; pre=pre_show; inv=(antePs,conseqP);
-     prog=st_preds; post=post_show} in
+  let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
+                                pre=pre_show; inv=(antePs,conseqP);
+                                prog=st_preds; post=post_show} in
   let _ = VC.print conc_vc in
     [(Fun.name my_fun1, conc_vc)]

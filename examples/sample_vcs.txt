@@ -145,6 +145,19 @@ bindings {
       CONCURRENT VERIFICATION CONDITION
 ------------------------------------------------------
 bindings {
+  kinds
+  Eff :-> Enum [E0,E1]
+  Id :-> Uninterpreted type
+  ObjType :-> Variant [User,UserName,Tweet,Timeline,Userline]
+  Oper :-> Variant [User_Add,User_AddFollowing,User_RemFollowing,User_AddFollower,User_RemFollower,User_Blocks,User_GetBlocks,User_IsBlockedBy,User_GetIsBlockedBy,User_GetInfo,User_GetFollowers,User_GetFollowing,UserName_Add,UserName_GetId,Tweet_New,Tweet_Get,Timeline_NewTweet,Timeline_Get,Userline_NewTweet,Userline_Get,NOP]
+  Ssn :-> Enum [get_userline,get_tweet,get_user_id_by_name,do_new_tweet,do_block_user,do_add_user,do_test1]
+  Timeline.id :-> Alias of UUID
+  Tweet.id :-> Alias of UUID
+  UUID :-> Extendible [!uuid0]
+  User.id :-> Alias of UUID
+  UserName.id :-> Alias of string
+  Userline.id :-> Alias of UUID
+  types
   !e0 :-> Eff
   !e1 :-> Eff
   !e2 :-> Eff
@@ -163,53 +176,72 @@ bindings {
   !v6 :-> Eff list
   !v7 :-> bool
   !v8 :-> bool
+  author_id :-> Eff -> UUID
+  content :-> Eff -> string
+  follower_id :-> Eff -> UUID
+  hb :-> Eff -> Eff -> bool
+  leader_id :-> Eff -> UUID
+  mkKey_UUID :-> UUID -> Id
+  mkKey_string :-> string -> Id
+  objid :-> Eff -> Id
+  objtyp :-> Eff -> ObjType
+  oper :-> Eff -> Oper
+  pwd :-> Eff -> string
+  sameobj :-> Eff -> Eff -> bool
+  seqno :-> Eff -> int
+  so :-> Eff -> Eff -> bool
+  ssn :-> Eff -> Ssn
   str :-> string
+  tweet_id :-> Eff -> UUID
   uid :-> UUID
   uid' :-> UUID
+  user_id :-> Eff -> UUID
+  username :-> Eff -> string
+  vis :-> Eff -> Eff -> bool
 }
 /*
  * --pre--------:
  */
     /\   (show(E0) = ~(ssn(E0) = do_new_tweet) && show(E1) = ~(ssn(E1) = do_new_tweet))
-    /\   (objid(!e5) = mkkey_UUID(uid') && oper(!e5) = Userline_Get && obtyp(!e5) = Userline)
+    /\   (objid(!e5) = mkkey_UUID(uid') && oper(!e5) = Userline_Get && objtyp(!e5) = Userline)
     /\   true
     /\   (ssn(!e5) = inv_fkey && seqno(!e5) = 0)
-    /\   (vis(E0,!e5) && show(E0) && isUserline_NewTweet(oper(E0))) => (objid(!e6) = mkkey_UUID(tweet_id(E0)) && oper(!e6) = Tweet_Get && obtyp(!e6) = Tweet)
-    /\   ~((vis(E0,!e5) && show(E0) && isUserline_NewTweet(oper(E0)))) => oper(!e6) = Nop
+    /\   (vis(E0,!e5) && show(E0) && oper(E0) = Userline_NewTweet) => (objid(!e6) = mkkey_UUID(tweet_id(E0)) && oper(!e6) = Tweet_Get && objtyp(!e6) = Tweet)
+    /\   ~((vis(E0,!e5) && show(E0) && oper(E0) = Userline_NewTweet)) => isNOP(oper(!e6))
     /\   (ssn(!e6) = inv_fkey && seqno(!e6) = 1)
-    /\   (vis(E1,!e5) && show(E1) && isUserline_NewTweet(oper(E1))) => (objid(!e7) = mkkey_UUID(tweet_id(E1)) && oper(!e7) = Tweet_Get && obtyp(!e7) = Tweet)
-    /\   ~((vis(E1,!e5) && show(E1) && isUserline_NewTweet(oper(E1)))) => oper(!e7) = Nop
+    /\   (vis(E1,!e5) && show(E1) && oper(E1) = Userline_NewTweet) => (objid(!e7) = mkkey_UUID(tweet_id(E1)) && oper(!e7) = Tweet_Get && objtyp(!e7) = Tweet)
+    /\   ~((vis(E1,!e5) && show(E1) && oper(E1) = Userline_NewTweet)) => isNOP(oper(!e7))
     /\   (ssn(!e7) = inv_fkey && seqno(!e7) = 2)
-  =>    (((vis(E0,!e5) && show(E0)))?((isUserline_NewTweet(oper(E0)))?((((vis(E0,!e6) && isTweet_New(oper(E0))))?(true):(false) || ((vis(E1,!e6) && show(E1) && isTweet_New(oper(E1))))?(true):(false) || !v5)):(false)):(true) && ((vis(E1,!e5) && show(E1)))?((isUserline_NewTweet(oper(E1)))?((((vis(E0,!e7) && show(E0) && isTweet_New(oper(E0))))?(true):(false) || ((vis(E1,!e7) && isTweet_New(oper(E1))))?(true):(false) || !v7)):(false)):(true) && !v8)
+  =>    (((vis(E0,!e5) && show(E0)))?((oper(E0) = Userline_NewTweet)?((((vis(E0,!e6) && oper(E0) = Tweet_New))?(true):(false) || ((vis(E1,!e6) && show(E1) && oper(E1) = Tweet_New))?(true):(false) || !v5)):(false)):(true) && ((vis(E1,!e5) && show(E1)))?((oper(E1) = Userline_NewTweet)?((((vis(E0,!e7) && show(E0) && oper(E0) = Tweet_New))?(true):(false) || ((vis(E1,!e7) && oper(E1) = Tweet_New))?(true):(false) || !v7)):(false)):(true) && !v8)
 /*
  * --prog--------:
  */
-    /\   (objid(!e0) = mkkey_UUID(uid) && oper(!e0) = User_GetFollowers && obtyp(!e0) = User)
+    /\   (objid(!e0) = mkkey_UUID(uid) && oper(!e0) = User_GetFollowers && objtyp(!e0) = User)
     /\   true
     /\   (ssn(!e0) = do_new_tweet && seqno(!e0) = 0)
-    /\   (objid(!e1) = mkkey_UUID(!uuid0) && oper(!e1) = Tweet_New && obtyp(!e1) = Tweet && author_id(!e1) = uid && content(!e1) = str)
+    /\   (objid(!e1) = mkkey_UUID(!uuid0) && oper(!e1) = Tweet_New && objtyp(!e1) = Tweet && author_id(!e1) = uid && content(!e1) = str)
     /\   true
     /\   (ssn(!e1) = do_new_tweet && seqno(!e1) = 1)
-    /\   (objid(!e2) = mkkey_UUID(uid) && oper(!e2) = Userline_NewTweet && obtyp(!e2) = Userline && tweet_id(!e2) = !uuid0)
+    /\   (objid(!e2) = mkkey_UUID(uid) && oper(!e2) = Userline_NewTweet && objtyp(!e2) = Userline && tweet_id(!e2) = !uuid0)
     /\   true
     /\   (ssn(!e2) = do_new_tweet && seqno(!e2) = 2)
-    /\   (vis(E0,!e0) && true && isUser_AddFollower(oper(fromJust((vis(E0,!e0))?(Some (E0)):(None))))) => (objid(!e3) = mkkey_UUID(fromJust((isUser_AddFollower(oper(E0)))?(Some (follower_id(E0))):(None))) && oper(!e3) = Timeline_NewTweet && obtyp(!e3) = Timeline && tweet_id(!e3) = !uuid0)
-    /\   ~((vis(E0,!e0) && isUser_AddFollower(oper(E0)))) => oper(!e3) = Nop
+    /\   (vis(E0,!e0) && oper(E0) = User_AddFollower) => (objid(!e3) = mkkey_UUID(follower_id(E0)) && oper(!e3) = Timeline_NewTweet && objtyp(!e3) = Timeline && tweet_id(!e3) = !uuid0)
+    /\   ~((vis(E0,!e0) && oper(E0) = User_AddFollower)) => isNOP(oper(!e3))
     /\   (ssn(!e3) = do_new_tweet && seqno(!e3) = 3)
-    /\   (vis(E1,!e0) && true && isUser_AddFollower(oper(fromJust((vis(E1,!e0))?(Some (E1)):(None))))) => (objid(!e4) = mkkey_UUID(fromJust((isUser_AddFollower(oper(E1)))?(Some (follower_id(E1))):(None))) && oper(!e4) = Timeline_NewTweet && obtyp(!e4) = Timeline && tweet_id(!e4) = !uuid0)
-    /\   ~((vis(E1,!e0) && isUser_AddFollower(oper(E1)))) => oper(!e4) = Nop
+    /\   (vis(E1,!e0) && oper(E1) = User_AddFollower) => (objid(!e4) = mkkey_UUID(follower_id(E1)) && oper(!e4) = Timeline_NewTweet && objtyp(!e4) = Timeline && tweet_id(!e4) = !uuid0)
+    /\   ~((vis(E1,!e0) && oper(E1) = User_AddFollower)) => isNOP(oper(!e4))
     /\   (ssn(!e4) = do_new_tweet && seqno(!e4) = 4)
 /*
  * --post---------:
  */
     /\   (show(E0) = true && show(E1) = true)
-    /\   (objid(!e5) = mkkey_UUID(uid') && oper(!e5) = Userline_Get && obtyp(!e5) = Userline)
+    /\   (objid(!e5) = mkkey_UUID(uid') && oper(!e5) = Userline_Get && objtyp(!e5) = Userline)
     /\   true
     /\   (ssn(!e5) = inv_fkey && seqno(!e5) = 0)
-    /\   (vis(E0,!e5) && show(E0) && isUserline_NewTweet(oper(E0))) => (objid(!e6) = mkkey_UUID(tweet_id(E0)) && oper(!e6) = Tweet_Get && obtyp(!e6) = Tweet)
-    /\   ~((vis(E0,!e5) && show(E0) && isUserline_NewTweet(oper(E0)))) => oper(!e6) = Nop
+    /\   (vis(E0,!e5) && show(E0) && oper(E0) = Userline_NewTweet) => (objid(!e6) = mkkey_UUID(tweet_id(E0)) && oper(!e6) = Tweet_Get && objtyp(!e6) = Tweet)
+    /\   ~((vis(E0,!e5) && show(E0) && oper(E0) = Userline_NewTweet)) => isNOP(oper(!e6))
     /\   (ssn(!e6) = inv_fkey && seqno(!e6) = 1)
-    /\   (vis(E1,!e5) && show(E1) && isUserline_NewTweet(oper(E1))) => (objid(!e7) = mkkey_UUID(tweet_id(E1)) && oper(!e7) = Tweet_Get && obtyp(!e7) = Tweet)
-    /\   ~((vis(E1,!e5) && show(E1) && isUserline_NewTweet(oper(E1)))) => oper(!e7) = Nop
+    /\   (vis(E1,!e5) && show(E1) && oper(E1) = Userline_NewTweet) => (objid(!e7) = mkkey_UUID(tweet_id(E1)) && oper(!e7) = Tweet_Get && objtyp(!e7) = Tweet)
+    /\   ~((vis(E1,!e5) && show(E1) && oper(E1) = Userline_NewTweet)) => isNOP(oper(!e7))
     /\   (ssn(!e7) = inv_fkey && seqno(!e7) = 2)
-  =>    (((vis(E0,!e5) && show(E0)))?((isUserline_NewTweet(oper(E0)))?((((vis(E0,!e6) && isTweet_New(oper(E0))))?(true):(false) || ((vis(E1,!e6) && show(E1) && isTweet_New(oper(E1))))?(true):(false) || !v5)):(false)):(true) && ((vis(E1,!e5) && show(E1)))?((isUserline_NewTweet(oper(E1)))?((((vis(E0,!e7) && show(E0) && isTweet_New(oper(E0))))?(true):(false) || ((vis(E1,!e7) && isTweet_New(oper(E1))))?(true):(false) || !v7)):(false)):(true) && !v8)
+  =>    (((vis(E0,!e5) && show(E0)))?((oper(E0) = Userline_NewTweet)?((((vis(E0,!e6) && oper(E0) = Tweet_New))?(true):(false) || ((vis(E1,!e6) && show(E1) && oper(E1) = Tweet_New))?(true):(false) || !v5)):(false)):(true) && ((vis(E1,!e5) && show(E1)))?((oper(E1) = Userline_NewTweet)?((((vis(E0,!e7) && show(E0) && oper(E0) = Tweet_New))?(true):(false) || ((vis(E1,!e7) && oper(E1) = Tweet_New))?(true):(false) || !v7)):(false)):(true) && !v8)

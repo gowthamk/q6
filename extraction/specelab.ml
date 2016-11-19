@@ -95,6 +95,8 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
   (* 3. Oper typedef to KE *)
   let aliased_oper_cons = extract_oper_cons schemas in
   let (_,oper_cons) = List.split aliased_oper_cons in
+    (* Nop is also an Oper cons *)
+  let oper_cons = oper_cons@[Cons.nop] in
   let add_Oper = KE.add (Ident.create "Oper") 
                    (Kind.Variant oper_cons) in
   (* 4. Qualified effcons aliases to VE *)
@@ -170,15 +172,32 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; aux}) =
                                  recognizer=id (*dummy*);
                                  args=[]}) in
       VE.add id sv ve in
-
+  (* 15. objid, obtype and oper functions to TE *)
+  let add_objid te = 
+    let typ = Type.Arrow (Type.eff,Type.id) in
+      TE.add (L.objid) typ te in
+  let add_objtyp te = 
+    let typ = Type.Arrow (Type.eff,Type.objtyp) in
+      TE.add (L.objtyp) typ te in
+  let add_oper te = 
+    let typ = Type.Arrow (Type.eff,Type.oper) in
+      TE.add (L.oper) typ te in
+  (* 16. vis, so, hb, and sameobj relations to TE *)
+  let add_rels te = 
+    let typ = Type.Arrow (Type.eff,Type.Arrow (Type.eff, Type.Bool)) in
+      TE.add (L.vis) typ @@ 
+      TE.add (L.so) typ @@
+      TE.add (L.hb) typ @@
+      TE.add (L.sameobj) typ te in
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
       [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID;
        add_Ssn] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
-      [add_Oper_recognizers; add_Eff_accessors; add_mkKeys; 
-       add_ssn; add_seqno] in
+      [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkKeys; 
+       add_ssn; add_seqno; add_objid; add_objtyp; add_oper; 
+       add_rels] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in

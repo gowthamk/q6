@@ -5,7 +5,7 @@ open Specelab
 type seq_t = TE.t * Predicate.t list * Predicate.t
 
 (* Verification Condition *)
-type t = {bindings: TE.t; 
+type t = {kbinds:KE.t; tbinds: TE.t; 
           (* program : a set of constraints (on effects) 
            * describing a (write) transaction's operational 
            * behaviour. *)
@@ -17,7 +17,7 @@ type t = {bindings: TE.t;
           inv: Predicate.t list * Predicate.t; 
           (* pre-condition: a constraint that "projects" 
            * the invariant on the pre-state (i.e., set of effects
-           * not including those constrained by prog) *)
+           * excluding those constrained by prog) *)
           pre: Predicate.t; 
           (* post-condition: a constraint that "projects" 
            * the invariant on the post-state (i.e., set of all 

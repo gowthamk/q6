@@ -22,10 +22,15 @@ struct
   let uuid = other "UUID"
   let eff = other "Eff"
   let ssn = other "Ssn"
+  let objtyp = other "ObjType"
   let is_oper t = (t = oper)
   let is_eff t = 
     let _ = Printf.printf "is_eff(%s)\n" (to_string t) in 
       (t = eff)
+  let _of str = match str with
+    |"Oper" -> oper | "id" -> id | "Eff" -> eff | "Ssn" -> ssn
+    | "UUID" -> uuid | "ObjType" -> objtyp | "unit" -> Unit
+    | _ -> failwith "Type._of: Unexpected"
 end
 
 module Cons = 
@@ -33,6 +38,11 @@ struct
   type t = T of {name: Ident.t; 
                  recognizer: Ident.t; 
                  args: (Ident.t * Type.t) list}
+  let isNop = Ident.create "isNOP"
+  let nop = T {name = Ident.create "NOP";
+               recognizer = isNop; 
+               args = []}
+  let name (T {name}) = name
 end
 
 module Fun = 
@@ -80,10 +90,12 @@ end
 module L = 
 struct
   let objid = Ident.create "objid"
-  let objtyp = Ident.create "obtyp"
+  let objtyp = Ident.create "objtyp"
   let oper = Ident.create "oper"
   let vis = Ident.create "vis"
   let so = Ident.create "so"
+  let hb = Ident.create "hb"
+  let sameobj = Ident.create "sameobj"
   let ssn = Ident.create "ssn"
   let seqno = Ident.create "seqno"
   let mkkey_string = Ident.create "mkkey_string"
@@ -183,25 +195,25 @@ struct
    * size(gv') ≤ size(gv). 
    *)
   let rec simplify assumps gv = 
+    let ret str v = v in
     match gv with
       (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
       | App (_isSome, [ITE (a, 
                             Option (Some b), 
                             Option None)])
-        when (_isSome = L.isSome) -> a
+        when (_isSome = L.isSome) -> simplify assumps a
       | App (_fromJust, [Option (Some a)])
-        when (_fromJust = L.fromJust) -> a
+        when (_fromJust = L.fromJust) -> simplify assumps a
       | App (f,v2s) -> 
           let v2s' = List.map (simplify assumps) v2s in
           let same = List.map2 (=) v2s v2s' in
           let all_same = List.fold_left (&&) true same in 
             if all_same then gv 
             else simplify assumps (App (f, v2s'))
-      | ITE (a,b,c) when (assumps |= a) -> b
-      | ITE (a,b,c) when (assumps |= (Not a)) -> c
+      | ITE (a,b,c) when (assumps |= a) -> simplify assumps b
+      | ITE (a,b,c) when (assumps |= (Not a)) -> simplify assumps c
       | ITE (a, ITE (b,c,d), e) when (d = e) -> 
-          let c' = simplify (a::b::assumps) c in 
-            ITE (And [a;b], c', d)
+          simplify assumps @@ ITE (And [a;b], c, d)
       | ITE (a,b,c) -> 
           let a' = simplify assumps a in
           let b' = simplify (a::assumps) b in 
@@ -211,29 +223,32 @@ struct
       | Option (Some a) -> 
           let a' = simplify assumps a in
             if a'= a then gv else simplify assumps @@ Option (Some a')
-      | And [] -> ConstBool true
-      | And [sv] -> sv
+      | And [] -> ret "1" @@ ConstBool true
+      | And [sv] -> ret "2" @@ simplify assumps sv
       | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
-          And (List.filter (fun sv -> not (assumps |= sv)) svs)
+          ret "3" @@ simplify assumps @@ 
+              And (List.filter (fun sv -> not (assumps |= sv)) svs)
       | And svs when (List.exists (function (And _) -> true
                                      | _ -> false) svs) ->
-          And (List.concat @@ List.map (function (And svs') -> svs'
-                                          | sv -> [sv]) svs)
+          ret "4" @@ simplify assumps @@ 
+              And (List.concat @@ List.map (function (And svs') -> svs'
+                                              | sv -> [sv]) svs)
       | And svs -> 
           let do_simplify sv = 
             simplify ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
           let svs' = List.map do_simplify svs in
           let same = List.map2 (=) svs svs' in
           let all_same = List.fold_left (&&) true same in 
-            if all_same then gv 
+            if all_same then ret "5" gv 
             else simplify assumps @@ And svs'
       | Or [] -> ConstBool true
-      | Or [sv] -> sv
+      | Or [sv] -> simplify assumps sv
       | Or svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
           ConstBool true
       | Or svs when (List.exists (function (Or _) -> true
                                      | _ -> false) svs) ->
-          Or(List.concat @@ List.map (function (Or svs') -> svs'
+          simplify assumps @@ 
+            Or (List.concat @@ List.map (function (Or svs') -> svs'
                                           | sv -> [sv]) svs)
       | Or svs -> 
           let do_simplify sv = simplify assumps sv in
