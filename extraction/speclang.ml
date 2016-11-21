@@ -22,6 +22,7 @@ struct
   let uuid = other "UUID"
   let eff = other "Eff"
   let ssn = other "Ssn"
+  let txn = other "Txn"
   let objtyp = other "ObjType"
   let is_oper t = (t = oper)
   let is_eff t = 
@@ -30,7 +31,7 @@ struct
   let _of str = match str with
     |"Oper" -> oper | "id" -> id | "Eff" -> eff | "Ssn" -> ssn
     | "UUID" -> uuid | "ObjType" -> objtyp | "unit" -> Unit
-    | _ -> failwith "Type._of: Unexpected"
+    | "Txn" -> txn | _ -> failwith "Type._of: Unexpected"
 end
 
 module Cons = 
@@ -97,6 +98,7 @@ struct
   let hb = Ident.create "hb"
   let sameobj = Ident.create "sameobj"
   let ssn = Ident.create "ssn"
+  let txn = Ident.create "txn"
   let seqno = Ident.create "seqno"
   let mkkey_string = Ident.create "mkkey_string"
   let mkkey_UUID = Ident.create "mkkey_UUID"
@@ -106,8 +108,10 @@ struct
   let isSome = Ident.create "isSome"
   let isNone = Ident.create "isNone"
   let fromJust = Ident.create "fromJust"
-  let nop = Ident.create "Nop"
   let show = Ident.create "show"
+  let e_nop = Ident.create "_ENOP"
+  let ssn_nop = Ident.create "ssn_nop"
+  let txn_nop = Ident.create "txn_nop"
 end
 
 module SymbolicVal = 
@@ -133,6 +137,7 @@ struct
     | Record of (Ident.t * t) list
     | EffCons of Cons.t
     | NewEff of Cons.t * t option
+    | DelayedITE of bool ref * t * t (* resolved only when necesary. *)
 
   let rec to_string x =
     let f = to_string in
@@ -164,8 +169,8 @@ struct
         | EffCons (Cons.T {name}) -> "Cons "^(Ident.name name)
         | NewEff (Cons.T {name},None) -> Ident.name name 
         | NewEff (Cons.T {name},Some sv) -> (Ident.name name)^(g sv)
-
-
+        | DelayedITE (x,v1,v2) -> "DelayedITE ("^(string_of_bool !x)
+              ^","^(to_string v1)^","^(to_string v2)^")"
   let nil = List ([],None)
 
   let cons = function (x, List (xs,s)) -> List (x::xs,s)
@@ -268,6 +273,24 @@ struct
           if v'=v then gv else simplify assumps @@ Not v'
       | _ -> gv
 
+  let rec ground v = 
+    let f = ground in
+    let g = List.map f in 
+      match v with 
+        | App (id,svs) -> App (id,g svs)
+        | Eq (v1,v2) -> Eq (f v1, f v2)
+        | Gt (v1,v2) -> Gt (f v1, f v2)
+        | Lt (v1,v2) -> Lt (f v1, f v2)
+        | Not v -> Not (f v)
+        | And svs -> And (g svs)
+        | Or svs -> Or (g svs)
+        | List (svs,s) -> List (g svs,s)
+        | ITE (v1,v2,v3) -> ITE (f v1, f v2, f v3)
+        | Record flds -> Record (List.map (fun (id,v) -> (id,f v)) flds)
+        | DelayedITE (x,v1,v2) -> if !x then v1 else v2
+        | _ -> v
+
+  let ground v = simplify [] @@ ground v
   let ite (v1,v2,v3) = simplify [] @@ ITE (v1,v2,v3)
   let app ((v1:Ident.t),(v2s : t list)) = simplify [] @@ App (v1,v2s)
 end
@@ -277,8 +300,7 @@ struct
   type t = BoolExpr of SymbolicVal.t
     | If of t * t 
     | Iff of t * t 
-    | Forall of (Ident.t * Type.t) list * t
-    | Exists of (Ident.t * Type.t) list * t
+    | Forall of Type.t * (Ident.t -> t)
 
   module S = SymbolicVal
 
@@ -291,15 +313,9 @@ struct
   let rec to_string = function BoolExpr sv -> S.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | Iff (v1,v2) -> (to_string v1)^" <=> "^(to_string v2)
-    | Forall (bvs, t) -> 
-        "∀("^(String.concat "," @@ 
-                List.map (fun (id,ty) -> 
-                            (Ident.name id)^":"^(Type.to_string ty)) bvs)
-        ^"). "^(to_string t)
-    | Forall (bvs, t) -> 
-        "∃("^(String.concat "," @@ 
-                List.map (fun (id,ty) -> 
-                            (Ident.name id)^":"^(Type.to_string ty)) bvs)
+    | Forall (ty,f) -> 
+        let bv = Ident.create "bv" in
+        "∀(bv:"^(Type.to_string ty)^"). "^(to_string @@ f bv)
     | _ -> failwith "P.to_string Unimpl."
 
   let _if (t1,t2) = match (t1,t2) with
@@ -313,6 +329,14 @@ struct
     | _ -> If (t1,t2)
 
   let _iff (t1,t2) = Iff (t1,t2)
+  let forall ty f = Forall (ty,f)
+
+  let rec ground p = match p with
+    | BoolExpr v -> BoolExpr (S.ground v)
+    | If (t1,t2) -> If (ground t1, ground t2)
+    | Iff (t1,t2) -> Iff (ground t1, ground t2)
+    | _ -> p (* assuming no delayed thunks under quantifiers.*)
+
 end
 
 module Misc =

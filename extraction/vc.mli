@@ -14,7 +14,7 @@ type t = {kbinds:KE.t; tbinds: TE.t;
            * operational behaviour of a (read) tranasction, along 
            * with a constraint that must hold under such 
            * behaviour so that the transaction always returns true.*)
-          inv: Predicate.t list * Predicate.t; 
+          (* inv: Predicate.t; *)
           (* pre-condition: a constraint that "projects" 
            * the invariant on the pre-state (i.e., set of effects
            * excluding those constrained by prog) *)

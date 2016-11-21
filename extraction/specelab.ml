@@ -151,15 +151,16 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   (* 10. UUID type def to KE *)
   let add_UUID ke = 
     KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
-  (* 11. ssn type def to KE *)
-  let add_Ssn ke = 
+  (* 11. Txn type def to KE *)
+  let add_Txn ke = 
     let enums = List.map Fun.name (invs @ writes) in 
-      KE.add (Ident.create "Ssn") (Kind.Enum enums) ke in
-  (* 12. ssn function to TE *)
-  let add_ssn te = 
-    let typ = Type.Arrow (Type.eff,Type.ssn) in
-    let id = Ident.create "ssn" in
-      TE.add id typ te in
+      (* We also add a nop txn for NOP effects *)
+      KE.add  (Ident.create @@ Type.to_string Type.txn)
+        (Kind.Enum (enums@[L.txn_nop])) ke in
+  (* 12. txn function to TE *)
+  let add_txn te = 
+    let typ = Type.Arrow (Type.eff,Type.txn) in
+      TE.add L.txn typ te in
   (* 13. seqno function to TE *)
   let add_seqno te = 
     let typ = Type.Arrow (Type.eff,Type.Int) in
@@ -193,15 +194,25 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_show te = 
     let typ = Type.Arrow (Type.eff, Type.Bool) in
       TE.add L.show typ te in
+  (* 18. add Ssn type to KE *)
+  let add_Ssn ke = 
+    KE.add (Ident.create @@ Type.to_string Type.ssn) Kind.Uninterpreted ke in
+  (* 19. ssn function to TE *)
+  let add_ssn te = 
+    let typ = Type.Arrow (Type.eff,Type.ssn) in
+    let id = Ident.create "ssn" in
+      TE.add id typ te in
+  (* 20. add ssn_nop to TE *)
+  let add_ssn_nop te = TE.add L.ssn_nop Type.ssn te in
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
       [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID;
-       add_Ssn] in
+       add_Txn; add_Ssn] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
       [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
-       add_ssn; add_seqno; add_objid; add_objtyp; add_oper; 
-       add_rels; add_show] in
+       add_ssn; add_ssn_nop; add_txn; add_seqno; add_objid; 
+       add_objtyp; add_oper; add_rels; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in

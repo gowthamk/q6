@@ -43,3 +43,10 @@ let from_just = function (Some x) -> x
   | None -> failwith "Expected something. Got nothing."
 
 let printf = Printf.printf
+
+let gen_name name_base = 
+  let count = ref 0 in
+    fun () -> 
+      let x = name_base^(string_of_int !count) in
+        (count := !count + 1; x)
+

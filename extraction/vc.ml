@@ -16,7 +16,7 @@ type t = {kbinds:KE.t; tbinds: TE.t;
            * operational behaviour of a (read) tranasction, along 
            * with a constraint that must hold under such 
            * behaviour so that the transaction always returns true.*)
-          inv: Predicate.t list * Predicate.t; 
+          (* inv: Predicate.t; *)
           (* pre-condition: a constraint that "projects" 
            * the invariant on the pre-state (i.e., set of effects
            * not including those constrained by prog) *)
@@ -40,7 +40,7 @@ let print_seq (te,antePs,conseqP) =
     Printf.printf "\t%s\n" (P.to_string conseqP);
   end
 
-let print {kbinds; tbinds; prog; inv=(antePs,conseqP); pre; post} =
+let print {kbinds; tbinds; prog; pre; post} =
   begin
     printf "--------- Concurrent VC -------\n";
     printf "\027[38;5;4mbindings {\027[0m\n";
@@ -49,20 +49,22 @@ let print {kbinds; tbinds; prog; inv=(antePs,conseqP); pre; post} =
     printf "  \027[38;5;4mtypes\027[0m\n";
     TE.print tbinds;
     printf "\027[38;5;4m} \027[0m\n";
-    printf "\027[38;5;4mpre: \027[0m\n";
-    List.iter (fun p -> 
-                 Printf.printf "    /\\   %s\n" 
-                   (P.to_string p)) (pre::antePs);
-    print_string "  =>";
-    Printf.printf "    %s\n" (P.to_string conseqP);
     printf "\027[38;5;4mprog: \027[0m\n";
     List.iter (fun p -> 
                  Printf.printf "    /\\   %s\n" 
                    (P.to_string p)) prog;
-    printf "\027[38;5;4mpost: \027[0m\n";
-    List.iter (fun p -> 
+    printf "\027[38;5;4mpre: \027[0m\n";
+    (*List.iter (fun p -> 
                  Printf.printf "    /\\   %s\n" 
-                   (P.to_string p)) (post::antePs);
-    print_string "  =>";
-    Printf.printf "    %s\n" (P.to_string conseqP);
+                   (P.to_string p)) (pre::antePs);*)
+    Printf.printf "    %s\n" (P.to_string pre);
+    (*print_string "  =>";
+    Printf.printf "    %s\n" (P.to_string inv);*)
+    printf "\027[38;5;4mpost: \027[0m\n";
+    (*List.iter (fun p -> 
+                 Printf.printf "    /\\   %s\n" 
+                   (P.to_string p)) (post::antePs);*)
+    Printf.printf "    %s\n" (P.to_string post);
+    (*print_string "  =>";
+    Printf.printf "    %s\n" (P.to_string inv);*)
   end

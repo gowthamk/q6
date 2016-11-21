@@ -11,7 +11,8 @@ module VC = Vc
 exception Inconsistency
 
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
-type env = {ssn: Ident.t; 
+type env = {txn: Ident.t; 
+            ssn: Ident.t;
             seqno:int; 
             show: Ident.t -> S.t; (* Additional conditions 
                   that an effect must satisfy to be visible.*)
@@ -19,6 +20,7 @@ type env = {ssn: Ident.t;
             te:TE.t; 
             pe: Predicate.t list; (* All predicates *)
             path: S.t list; (* branch predicates *)
+            effs: Ident.t list; (* Effects generated *)
             ve:VE.t}
 
 (* Symbolic Trace *)
@@ -41,7 +43,7 @@ let pervasives = [("Pervasives.@@", "@@");
 let printf = Printf.printf
 
 (* 
- * OMGWTFBMC bound
+ * BMC bound
  *)
 let k =ref 2 (* will be overridden in doIt *)
 let eff_consts = ref [] (* will be overridden in doIt *)
@@ -170,15 +172,11 @@ let rec type_of_tye ke (tye : type_expr) =
 
 let map_snd_opts = List.map (function (_,Some x) -> x
                                | _ -> failwith "Unexpected")
-let gen_name name_base = 
-  let count = ref 0 in
-    fun () -> 
-      let x = name_base^(string_of_int !count) in
-        (count := !count + 1; x)
-
 let fresh_eff_name = gen_name "!e"
 let fresh_name = gen_name "!v"
 let fresh_uuid_name = gen_name "!uuid"
+let fresh_ssn_name = gen_name "!ssn_"
+let fresh_ssn () = Ident.create @@ fresh_ssn_name ()
 
 let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
@@ -203,23 +201,31 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let doIt_arg (arg_id,arg_sv) = S.Eq (S.App (arg_id, [sv_y]), 
                                         arg_sv) in
   let phis_4 = List.map doIt_arg args in
-  (* For the new effect, phi_1 to phis_4 are true only under 
+  let phi_5 = S.Eq (S.App (L.txn, [sv_y]), 
+                     S.Var env.txn) in
+  let phi_6 = S.Eq (S.App (L.ssn, [sv_y]), 
+                     S.Var env.ssn) in
+  let phi_7 = S.Eq (S.App (L.seqno, [sv_y]), 
+                     S.ConstInt env.seqno) in
+  (* For the new effect, phi_1 to phi_7 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
-  let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3]@phis_4)in
+  let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3] @ phis_4 @ 
+                                [phi_5; phi_6; phi_7])in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
-  (* phi_2' is true anywhere outside the current branch *)
+  let phi_3' = S.Eq (S.App (L.txn, [sv_y]), 
+                     S.Var L.txn_nop) in
+  let phi_4' = S.Eq (S.App (L.ssn, [sv_y]), 
+                     S.Var L.ssn_nop) in
+  (* phi_2' and phi_3' are true anywhere outside the current branch *)
   let fcond = P.of_sv @@ S.Not (S.And env.path) in
-  let fcondp = P._if (fcond, P.of_sv phi_2') in
-  let phi_5 = S.Eq (S.App (L.ssn, [sv_y]), 
-                     S.Var env.ssn) in
-  let phi_6 = S.Eq (S.App (L.seqno, [sv_y]), 
-                     S.ConstInt env.seqno) in
-  (* phi_5 and phi_6 are true unconditionally *)
-  let uncondp = P.of_sv @@ S.And [phi_5; phi_6] in
-  let ps = [tcondp; fcondp; uncondp] in
+  let fcondp = P._if (fcond, P.of_sv @@ S.And [phi_2'; phi_3'; phi_4']) in
+  (*let uncond = P.of_sv @@ S.Not (S.Eq (S.App (L.oper, [sv_y]), 
+                                       S.Var (Cons.name Cons.nop))) in
+  let uncondp = P._if (uncond, P.of_sv @@ S.And [phi_5; phi_6]) in*)
+  let ps = [tcondp; fcondp(*; uncondp*)] in
   (* let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in*)
     (y,ps)
 
@@ -228,16 +234,17 @@ let doIt_append env typed_sv1 sv2 =
   let te' = TE.add y Type.eff env.te in
   let pe' = env.pe @ ps in
   let seqno' = env.seqno + 1 in
-    {env with seqno=seqno';te=te'; pe=pe'}
+  let effs' = y::(env.effs) in
+    {env with seqno=seqno';te=te'; pe=pe'; effs=effs'}
 
 let doIt_get env typed_sv1 sv2 = 
   let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
   let vis (id1,id2) = S.App (L.vis, [S.Var id1;
                                       S.Var id2]) in
-  let grded_eff (id1,id2) = S.ITE (S.And [vis (id1,id2); 
-                                            env.show id1], 
-                                  S.Option (Some (S.Var id1)), 
-                                  S.Option None) in
+  let grded_eff (id1,id2) = 
+      S.ITE (S.And [vis (id1,id2); (env.show id1)], 
+             S.Option (Some (S.Var id1)), 
+             S.Option None) in
   (*
    * E.g: [vis(E0,!e0)? Some E0 : None; vis(E1,!e0)? Some E1 : None]
    *)
@@ -252,7 +259,8 @@ let doIt_get env typed_sv1 sv2 =
   let te' = TE.add l (Type.List Type.eff) (TE.add y Type.eff env.te) in
   let pe' = env.pe @ y_ps in
   let seqno' = env.seqno + 1 in
-  let env' = {env with seqno=seqno'; te=te'; pe=pe'} in
+  let effs' = y::(env.effs) in
+  let env' = {env with seqno=seqno'; te=te'; pe=pe'; effs=effs'} in
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
 
@@ -423,14 +431,13 @@ and doIt_expr env (expr:Typedtree.expression)
           (* UUID.create () *)
           | S.Var id when (Ident.name id = "Uuid.create") -> 
               let new_uuid = Ident.create @@ fresh_uuid_name () in
-              let te' = TE.add new_uuid Type.uuid env.te in
               let uuids = match KE.find_name "UUID" env.ke with
                 | Kind.Extendible prev -> !prev
                 | _ -> failwith "UUID Unexpected" in
               let ke' = KE.add (Ident.create "UUID")
                           (Kind.Extendible (ref @@ new_uuid::uuids))
                           env.ke in
-                (S.Var new_uuid, {env with ke=ke';te=te'}, vcs1 @ vcs2)
+                (S.Var new_uuid, {env with ke=ke'}, vcs1 @ vcs2)
           | S.Var id when (Ident.name id = "raise") -> 
               let _ = match sv2s with 
                 | [S.NewEff (Cons.T {name}, None)]
@@ -742,7 +749,7 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
     end
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 2 (* k'*) in
+  let _ = k := 11 (* k'*) in
   let _ = eff_consts := 
           List.tabulate !k (fun i -> 
                               Ident.create @@ "E"^(string_of_int i)) in
@@ -759,37 +766,65 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                      (invs)
                with Not_found -> not_found @@ tmp_name2
                     ^" function not found" in
-  let env1 = {ssn=Fun.name my_fun1; seqno=0; 
-              ke=KE.add (Ident.create "Eff") 
-                  (Kind.Enum !eff_consts) ke; 
+  let (ssn2,ssn1) = (fresh_ssn (), fresh_ssn ()) in
+  let ke = KE.add (Ident.create "Eff") 
+                  (* An additional NOP effect for technical reasons *)
+                  (Kind.Enum (!eff_consts@[L.e_nop])) ke in
+  let te = TE.add ssn2 Type.ssn (TE.add ssn1 Type.ssn te) in
+  let env1 = {txn=Fun.name my_fun1; seqno=0; 
+              ssn=ssn1; ke=ke; te=te;
               pe=pe; path=[]; ve=ve; 
               show=(fun eff -> S.ConstBool true);
-              te=List.fold_left 
+              effs=[]; 
+              (*te=TE.add ssn1 Type.ssn te List.fold_left 
                     (fun te eff_const -> 
-                       TE.add eff_const Type.eff te) te !eff_consts} in
+                       TE.add eff_const Type.eff te) te !eff_consts*)} in
   let (_, env1', vcs1) = doIt_fun env1 my_fun1 in
-  let env2 = {env1 with ssn=Fun.name my_fun2; ke=env1'.ke;
-                        show = (fun eff -> 
-                                  S.App (L.show, [S.Var eff]))} in
+  let is_pre = ref false in
+  let env2 = 
+      {env1 with txn=Fun.name my_fun2; ke=env1'.ke; 
+                 ssn=ssn2;
+                 show=(fun e -> 
+                         DelayedITE(is_pre, 
+                                    S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
+                                                 S.Var ssn1)),
+                                    S.ConstBool true))} in
   let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
-  let ((te1,st_preds,_),(te2,antePs,conseqP)) = 
+  let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
     match (vcs1,vcs2) with | ([st],[inv_vc]) -> (st,inv_vc)
       | _ -> failwith "Specverify.doIt: Unexpected" in
+  let (effs1, effs2) = (env1'.effs, env2'.effs) in
+  let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
+  let mk_ssn_cstr ssn_id effs = 
+      P.forall Type.eff 
+        (fun v -> 
+           P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
+                                   S.Var ssn_id), 
+                  P.of_sv @@ in_set v @@ List.rev effs)) in
+  let pre = 
+    begin
+      is_pre := true;
+      P.ground inv
+    end in
+  let prog = 
+    begin
+      is_pre := false;
+      List.map P.ground @@ 
+          List.concat [wr_prog; inv_prog; [mk_ssn_cstr ssn1 effs1; 
+                                           mk_ssn_cstr ssn2 effs2]]
+    end in
+  let post = 
+    begin
+      is_pre := false;
+      P.ground inv
+    end in
   let new_te = TE.fold_name 
                  (fun id ty te -> 
                     try (ignore @@ TE.find_name (Ident.name id) te; 
                          failwith @@ (Ident.name id)^" variable \
                                   duplicate found. Please rename.")
                     with Not_found -> TE.add id ty te) te2 te1 in
-  let pre_show_eff effc = S.Eq (S.App (L.show, [S.Var effc]),
-                                 S.Not (S.Eq (S.App (L.ssn, [S.Var effc]),
-                                                S.Var env1.ssn))) in
-  let pre_show = P.of_sv @@ S.And (List.map pre_show_eff !eff_consts) in
-  let post_show_eff effc = S.Eq (S.App (L.show, [S.Var effc]),
-                                  S.ConstBool true) in
-  let post_show = P.of_sv @@ S.And (List.map post_show_eff !eff_consts) in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
-                                pre=pre_show; inv=(antePs,conseqP);
-                                prog=st_preds; post=post_show} in
+                                pre=pre; prog=prog; post=post} in
   let _ = VC.print conc_vc in
     [(Fun.name my_fun1, conc_vc)]
