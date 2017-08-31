@@ -82,14 +82,31 @@ let mk_or conjs = mk_or !ctx conjs
 let mk_eq e1 e2 = mk_eq !ctx e1 e2
 let mk_gt e1 e2 = mk_gt !ctx e1 e2
 let mk_lt e1 e2 = mk_lt !ctx e1 e2
+let mk_ge e1 e2 = mk_ge !ctx e1 e2
+let mk_le e1 e2 = mk_le !ctx e1 e2
 let mk_not e = mk_not !ctx e
 let mk_true () = mk_true !ctx
 let mk_false () = mk_false !ctx
 let mk_ite e1 e2 e3 = mk_ite !ctx e1 e2 e3
+let mk_distinct es = mk_distinct !ctx es
+let mk_add es = mk_add !ctx es
+let mk_sub es = mk_sub !ctx es
+let mk_mul es = mk_mul !ctx es
 let _assert e = Solver.add !solver [e]
 let _assert_all e = Solver.add !solver e
 let check_sat () = Solver.check !solver []
 
+let (@=>) e1 e2 = mk_implies !ctx e1 e2
+let (@<=>) e1 e2 = mk_iff !ctx e1 e2
+let (@&) e1 e2 = mk_and [e1; e2]
+let (@|) e1 e2 = mk_or [e1; e2]
+let (@=) e1 e2 = mk_eq e1 e2
+let (@<) e1 e2 = mk_lt e1 e2
+let (@>) e1 e2 = mk_gt e1 e2
+let (@>=) e1 e2 = mk_ge e1 e2
+let (@<=) e1 e2 = mk_le e1 e2
+let (@!=) e1 e2 = mk_not (e1 @= e2)
+let (!@) e = mk_not e
 let vis (e1,e2) = mk_app (fun_of_str "vis") [e1; e2]
 let so (e1,e2) = mk_app (fun_of_str "so") [e1; e2]
 let hb (e1,e2) = mk_app (fun_of_str "hb") [e1; e2]
@@ -98,18 +115,9 @@ let objtyp e = mk_app (fun_of_str "objtyp") [e]
 let objid e = mk_app (fun_of_str "objid") [e]
 let ssn e = mk_app (fun_of_str "ssn") [e]
 let txn e = mk_app (fun_of_str "txn") [e]
+let sametxn (e1,e2) = (txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2))
 let seqno e = mk_app (fun_of_str "seqno") [e]
 let oper e = mk_app (fun_of_str "oper") [e]
-let (@=>) e1 e2 = mk_implies !ctx e1 e2
-let (@<=>) e1 e2 = mk_iff !ctx e1 e2
-let (@&) e1 e2 = mk_and [e1; e2]
-let (@|) e1 e2 = mk_or [e1; e2]
-let (@=) e1 e2 = mk_eq e1 e2
-let (@<) e1 e2 = mk_lt e1 e2
-let (@>) e1 e2 = mk_gt e1 e2
-let (@>=) e1 e2 = (e1 @> e2) @| (e1 @= e2)
-let (@!=) e1 e2 = mk_not (e1 @= e2)
-let (!@) e = mk_not e
 
 let forall sorts f = 
   let n = List.length sorts in
@@ -181,6 +189,20 @@ let declare_variant_type (ty:Type.t) (consts: Cons.t list) =
     printf "%s added\n" (Type.to_string ty);
   end
 
+let declare_extendible_type (ty:Type.t) (consts: Ident.t list) =
+  let sort = mk_uninterpreted_s (Type.to_string ty) in
+  let s_consts = List.map (fun c -> 
+                         mk_const_s (Ident.name c) sort) consts in
+  let distinct_asn = mk_distinct s_consts in
+    begin
+      Hashtbl.add tmap ty sort;
+      List.iter (fun (c,s_c) -> 
+                   Hashtbl.add cmap (Ident.name c) s_c)
+        (List.zip consts s_consts);
+      _assert distinct_asn;
+      printf "%s added\n" (Type.to_string ty);
+    end
+
 let declare_types (ke,te) =
   begin
     Hashtbl.add tmap Type.Int (mk_int_sort ());
@@ -194,7 +216,7 @@ let declare_types (ke,te) =
                    | Kind.Enum consts -> 
                        declare_enum_type (tyname ()) consts
                    | Kind.Extendible consts ->
-                       declare_enum_type (tyname ()) !consts
+                       declare_extendible_type (tyname ()) !consts
                    | _ -> ()) ke;
     (* If the type is not already mapped by tmap, map it to an 
      * uninterpreted sort (including option and list types) *)
@@ -295,7 +317,7 @@ let assert_axioms ke =
   let asns2 = [enop_ssn; enop_txn] in
     _assert_all @@ asns1@asns2
 
-let assert_contracts () = 
+let assert_mb_contracts () = 
   let gt = const_of_name "Tweet_Get" in
   let f a b c d = 
     mk_and [oper(d) @= gt; so(a,b); 
@@ -303,6 +325,32 @@ let assert_contracts () =
   let asn = expr_of_quantifier @@ forallE4 f in
     _assert asn
 
+let assert_ba_contracts () =
+  let do_withdraw = const_of_name "do_withdraw" in
+  let wd = const_of_name "BA_Withdraw" in
+  let dp = const_of_name "BA_Deposit" in
+  let gb = const_of_name "BA_GetBalance" in
+  let amt = fun_of_str "amt" in
+  let f a b =
+    mk_and [oper(a) @= wd; 
+            oper(b) @= gb; 
+            txn(b) @= do_withdraw; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let g a b c d =
+    mk_and [oper(a) @= dp; oper(b) @= gb; 
+            oper(c) @= wd; so(b,c);
+            txn(b) @= do_withdraw; 
+            sametxn(b,c); 
+            oper(d) @= gb; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  (* Additional high-level invariant: ∀e. amt(e) >= 0 *)
+  let h a = (mk_app amt [a]) @>= (mk_numeral_i 0) in
+  let asns = List.map expr_of_quantifier [forallE2 f; 
+                                          forallE4 g; 
+                                          forallE1 h] in
+    _assert_all asns
+
+let assert_contracts () = assert_mb_contracts ()
 (*
  * Encoding
  *)
@@ -314,6 +362,14 @@ let rec doIt_sv sv =
   let f = doIt_sv in 
     match sv with 
       | Var id -> const_of_id id
+      | App (id,svs) when (Ident.name id = "+") -> mk_add (List.map f svs)
+      | App (id,svs) when (Ident.name id = "-") -> mk_sub (List.map f svs)
+      | App (id,svs) when (Ident.name id = "*") -> mk_mul (List.map f svs)
+      | App (id,[v1;v2]) when (Ident.name id = "=") -> (f v1) @= (f v2)
+      | App (id,[v1;v2]) when (Ident.name id = "<") -> (f v1) @< (f v2)
+      | App (id,[v1;v2]) when (Ident.name id = "<=") -> (f v1) @<= (f v2)
+      | App (id,[v1;v2]) when (Ident.name id = ">") -> (f v1) @> (f v2)
+      | App (id,[v1;v2]) when (Ident.name id = ">=") -> (f v1) @>= (f v2)
       | App (id,svs) -> mk_app (fun_of_str @@ Ident.name id)
                           (List.map f svs) 
       | Eq (v1,v2) -> (f v1) @= (f v2)
@@ -326,7 +382,7 @@ let rec doIt_sv sv =
       | ConstBool true -> mk_true ()
       | ConstBool false -> mk_false ()
       | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
-      | _ -> failwith "doIt_sv: Unimpl."
+      | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
 
 let rec doIt_pred p = match p with
   | P.BoolExpr v -> doIt_sv v
@@ -342,7 +398,6 @@ let rec doIt_pred p = match p with
                let _ = Hashtbl.remove cmap (Ident.name bv) in
                  p
            | _ -> failwith "doIt_pred: Unexpected")
-  | _ -> failwith "doIt_pred: Unimpl."
 
 let declare_pred name p =
   let s_pred = mk_const_s name (sort_of_typ Type.Bool) in
