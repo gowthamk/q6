@@ -181,7 +181,7 @@ let do_new_tweet uid str =
            | Some fid -> Timeline_table.append fid 
                       (Timeline.NewTweet {tweet_id=tweet_id})
            | None -> ()) fids;
-    end
+    end 
 
 let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in

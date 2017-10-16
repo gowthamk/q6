@@ -110,12 +110,15 @@ let (!@) e = mk_not e
 let vis (e1,e2) = mk_app (fun_of_str "vis") [e1; e2]
 let so (e1,e2) = mk_app (fun_of_str "so") [e1; e2]
 let hb (e1,e2) = mk_app (fun_of_str "hb") [e1; e2]
+let hbid (id1,id2) = mk_app (fun_of_str "hbid") [id1; id2]
 let sameobj (e1,e2) = mk_app (fun_of_str "sameobj") [e1; e2]
 let objtyp e = mk_app (fun_of_str "objtyp") [e]
 let objid e = mk_app (fun_of_str "objid") [e]
 let ssn e = mk_app (fun_of_str "ssn") [e]
 let txn e = mk_app (fun_of_str "txn") [e]
+let currtxn e = mk_app (fun_of_str "currtxn") [e]
 let sametxn (e1,e2) = (txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2))
+let notsametxn (e1,e2) = mk_not ((txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2)))
 let seqno e = mk_app (fun_of_str "seqno") [e]
 let oper e = mk_app (fun_of_str "oper") [e]
 
@@ -136,6 +139,13 @@ let forallE1 f =
     | [x] -> f x | _ -> failwith "Unexpected!" in
     forall sorts f' 
 
+let forallE1_id f = 
+  let s_Eff = Hashtbl.find tmap Type.id in
+  let sorts = [s_Eff] in
+  let f' vars = match vars with 
+    | [x] -> f x | _ -> failwith "Unexpected!" in
+    forall sorts f'
+
 let forallE2 f = 
   let s_Eff = Hashtbl.find tmap Type.eff in
   let sorts = [s_Eff; s_Eff] in
@@ -143,12 +153,26 @@ let forallE2 f =
     | [x; y] -> f x y | _ -> failwith "Unexpected!!" in
     forall sorts f' 
 
+let forallE2_id f = 
+  let s_Eff = Hashtbl.find tmap Type.id in
+  let sorts = [s_Eff; s_Eff] in
+  let f' vars = match vars with 
+    | [x; y] -> f x y | _ -> failwith "Unexpected!!" in
+    forall sorts f'
+
 let forallE3 f = 
   let s_Eff = Hashtbl.find tmap Type.eff in
   let sorts = [s_Eff; s_Eff; s_Eff] in
   let f' vars = match vars with 
     | [x; y; z] -> f x y z | _ -> failwith "Unexpected!!!" in
     forall sorts f' 
+
+let forallE3_id f = 
+  let s_Eff = Hashtbl.find tmap Type.id in
+  let sorts = [s_Eff; s_Eff; s_Eff] in
+  let f' vars = match vars with 
+    | [x; y; z] -> f x y z | _ -> failwith "Unexpected!!!" in
+    forall sorts f'
 
 let forallE4 f = 
   let s_Eff = Hashtbl.find tmap Type.eff in
@@ -225,7 +249,6 @@ let declare_types (ke,te) =
         | Type.Int | Type.Bool | Type.String | Type.Unit -> ()
         | _ -> if Hashtbl.mem tmap typ then () 
                else let sort_name = Str.strip_ws (Type.to_string typ) in
-                    let _ = printf "%s added\n" sort_name in
                     let sort = mk_uninterpreted_s sort_name in
                       Hashtbl.add tmap typ sort in
       TE.iter (fun _ typ -> add_if_unknown typ) te;
@@ -242,7 +265,6 @@ let declare_vars te =
     let (arg_sorts,res_sort) = (List.map sort_of_typ arg_typs, 
                                 sort_of_typ res_typ) in
     let func_decl = mk_func_decl_s name arg_sorts res_sort in
-    let _ = printf "%s being added\n" name in
       Hashtbl.add fmap name func_decl in
   let declare_const name typ = 
     let sort = sort_of_typ typ in
@@ -309,8 +331,21 @@ let assert_axioms ke =
                      (hb(a,b) @& hb(b,c)) @=> hb(a,c)) in
   (* hb is acyclic *)
   let hb_acyclic = forallE1 (fun a -> mk_not @@ hb(a,a)) in
+  (* hbid is a total order relation *)
+  let hbid_irreflexive = forallE1_id (fun a -> hbid(a,a)) in
+  let hbid_antisymmetry = forallE2_id 
+                  (fun a b -> 
+                     (hbid(a,b) @& hbid(b,a)) @=> a @= b) in
+  let hbid_trans = forallE3_id 
+                  (fun a b c -> 
+                     (hbid(a,b) @& hbid(b,c)) @=> hbid(a,c)) in
+  let hbid_trich = forallE2_id 
+                  (fun a b -> 
+                     hbid(a,b) @| hbid(b,a)) in     
+  (* hbid *)        
   let qasns1 = [sameobj_def; so_def; so_trans; vis_sameobj;
-                e_not_nop; hb_def1; hb_def2; hb_acyclic; seqno_pos] in
+                e_not_nop; hb_def1; hb_def2; hb_acyclic; hbid_trich; 
+                              hbid_trans; hbid_antisymmetry; hbid_irreflexive; seqno_pos] in
   let qasns2 = mkkey_bijections in
   let asns1 = List.map (fun q -> expr_of_quantifier q) @@ 
                 List.concat [qasns1; qasns2] in
@@ -322,15 +357,17 @@ let assert_mb_contracts () =
   let f a b c d = 
     mk_and [oper(d) @= gt; so(a,b); 
             vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in
-  let asn = expr_of_quantifier @@ forallE4 f in
-    _assert asn
+  let asns = List.map expr_of_quantifier [forallE4 f] in
+    _assert_all asns
 
 let assert_ba_contracts () =
   let do_withdraw = const_of_name "do_withdraw" in
+  (*let do_txn = const_of_name "do_txn" in*)
   let wd = const_of_name "BA_Withdraw" in
   let dp = const_of_name "BA_Deposit" in
   let gb = const_of_name "BA_GetBalance" in
   let amt = fun_of_str "amt" in
+  (* Every withdraw is visible to getbalance. *)
   let f a b =
     mk_and [oper(a) @= wd; 
             oper(b) @= gb; 
@@ -345,9 +382,15 @@ let assert_ba_contracts () =
             vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
   (* Additional high-level invariant: ∀e. amt(e) >= 0 *)
   let h a = (mk_app amt [a]) @>= (mk_numeral_i 0) in
+  (* Every withdraw is visible to the current transaction's getbalance *)
+  let i a b =
+    mk_and [oper(a) @= wd;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
   let asns = List.map expr_of_quantifier [forallE2 f; 
                                           forallE4 g; 
-                                          forallE1 h] in
+                                          forallE1 h;
+                                          forallE2 i] in
     _assert_all asns
 
 let assert_contracts () = assert_mb_contracts ()

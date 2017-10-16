@@ -99,6 +99,10 @@ struct
   let sameobj = Ident.create "sameobj"
   let ssn = Ident.create "ssn"
   let txn = Ident.create "txn"
+  (* KE's addition *)
+  let currtxn = Ident.create "currtxn"
+  let hbid = Ident.create "hbid"
+  (* KE's addition *)
   let seqno = Ident.create "seqno"
   let mkkey_string = Ident.create "mkkey_string"
   let mkkey_UUID = Ident.create "mkkey_UUID"

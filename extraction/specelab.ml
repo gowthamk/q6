@@ -166,6 +166,11 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
     let typ = Type.Arrow (Type.eff,Type.Int) in
     let id = Ident.create "seqno" in
       TE.add id typ te in
+  (*13a. currtxn function to TE *)
+  let add_currtxn te = 
+    let typ = Type.Arrow (Type.eff,Type.Bool) in
+    let id = Ident.create "currtxn" in
+      TE.add id typ te in
   (* 14. Inconsistency to VE *)
   let add_Inconsistency ve = 
     let id = Ident.create "Inconsistency" in
@@ -190,6 +195,10 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
       TE.add (L.so) typ @@
       TE.add (L.hb) typ @@
       TE.add (L.sameobj) typ te in
+  (*16a. happens before relation for ids*)
+  let add_hbid te =  
+    let typ = Type.Arrow (Type.id,Type.Arrow (Type.id, Type.Bool)) in
+      TE.add (L.hbid) typ te in
   (* 17. add show to TE *)
   let add_show te = 
     let typ = Type.Arrow (Type.eff, Type.Bool) in
@@ -211,8 +220,8 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
       [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
-       add_ssn; add_ssn_nop; add_txn; add_seqno; add_objid; 
-       add_objtyp; add_oper; add_rels; add_show] in
+       add_ssn; add_ssn_nop; add_txn; add_seqno; add_currtxn; add_objid; 
+       add_objtyp; add_oper; add_rels; add_hbid; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in
