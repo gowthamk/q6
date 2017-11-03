@@ -9,7 +9,7 @@ module P = Predicate
 module VC = Vc
 
 exception Inconsistency
-
+let unmanifest_list = Ident.create @@ "!L";;
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
 type env = {txn: Ident.t; 
             ssn: Ident.t;
@@ -17,6 +17,7 @@ type env = {txn: Ident.t;
             show: Ident.t -> S.t; (* Additional conditions 
                   that an effect must satisfy to be visible.*)
             ke:KE.t; 
+            is_inv: bool;
             te:TE.t; 
             pe: Predicate.t list; (* All predicates *)
             path: S.t list; (* branch predicates *)
@@ -77,8 +78,7 @@ let (--) te1 te2 =
       (fun id typ diff_te -> 
          try (ignore @@ TE.find_name (Ident.name id) te2; 
               diff_te) 
-         with Not_found -> 
-           TE.add id typ diff_te)
+         with Not_found -> TE.add id typ diff_te)
       te1 TE.empty
 
 let (++) te1 te2 = TE.fold_name TE.add te2 te1
@@ -189,6 +189,7 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let phi_1 = S.Eq (S.App (L.objid, [sv_y]),
                      S.App (mkkey_ty1, [sv1])) in
   (* let phi_2 = S.App (cons_t.recognizer,[S.App (L.oper, [sv_y])]) in *)
+
   let phi_2 = S.Eq (S.App (L.oper, [sv_y]), 
                     S.Var (cons_t.name)) in
   let objtyp = Ident.create @@ 
@@ -207,11 +208,14 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
                      S.Var env.ssn) in
   let phi_7 = S.Eq (S.App (L.seqno, [sv_y]), 
                      S.ConstInt env.seqno) in
+  let is_currtxn = not env.is_inv in
+  let phi_8 = S.Eq (S.App (L.currtxn, [sv_y]), 
+                     S.ConstBool is_currtxn) in
   (* For the new effect, phi_1 to phi_7 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3] @ phis_4 @ 
-                                [phi_5; phi_6; phi_7])in
+                                [phi_5; phi_6; phi_7; phi_8]) in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
@@ -255,7 +259,7 @@ let doIt_get env typed_sv1 sv2 =
    * ys is the manifest prefix. We also need to create a list 
    * variable to serve as the unmanifest suffix.
    *)
-  let l = Ident.create @@ fresh_name () in
+  let l = unmanifest_list in
   let te' = TE.add l (Type.List Type.eff) (TE.add y Type.eff env.te) in
   let pe' = env.pe @ y_ps in
   let seqno' = env.seqno + 1 in
@@ -401,6 +405,7 @@ and doIt_expr env (expr:Typedtree.expression)
                   [(Asttypes.Nolabel,Some e1); 
                    (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
         let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
+        let S.NewEff (cons_t, _) = sv2 in
         let typ1 = type_of_tye env.ke e1.exp_type in
         let env'' = doIt_append env' (sv1,typ1) sv2 in
           (S.ConstUnit, env'', vcs)
@@ -482,7 +487,7 @@ and doIt_expr env (expr:Typedtree.expression)
         let (sv2,env'',vcs2) = doIt_expr env' e2 in
           (sv2,env'',vcs1 @ vcs2)
     (* \x.e *)
-    | Texp_function (_,[case],_) -> 
+    | Texp_function (_,[case],_) ->  
         let (args,body) = Misc.extract_lambda case in
         let open Types in
         let arrow_t = expr.exp_type.desc in
@@ -514,7 +519,7 @@ and doIt_expr env (expr:Typedtree.expression)
            * does some the reasoning. *)
           | List ([],Some l) -> 
               let _ = print_string "unmanifest during match\n" in
-              let x = Ident.create @@ fresh_name () in
+              let x = unmanifest_list (*Ident.create @@ fresh_name ()*) in
               let xte = TE.add x exptyp env'.te in
                 (S.Var x, {env' with te=xte}, [])
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
@@ -561,7 +566,9 @@ and doIt_expr env (expr:Typedtree.expression)
           (sv, env3, vcs1 @ vcs2 @ vcs3)
     | _ -> failwith "Unimpl. expr"
 
-and doIt_sv_cases env scru_sv typ cases = match typ with
+and doIt_sv_cases env scru_sv typ cases = 
+  let _ = Printf.printf "This: %s\n" (S.to_string scru_sv) in
+  match typ with
   | Type.Option _ -> 
       (* 1. Some case *)
       let some_grd = S.app (L.isSome,[scru_sv]) in
@@ -598,7 +605,7 @@ and doIt_sv_cases env scru_sv typ cases = match typ with
              raise Inconsistency in
         (sv, env'', vcs1 @ vcs2)
   | typ when (Type.is_eff typ) -> doIt_eff_cases env scru_sv cases
-  | _ -> failwith @@ "doIt_sv_cases Unimpl. for "
+  | _ -> (*doIt_list_cases env scru_sv cases*) failwith @@ "doIt_sv_cases Unimpl. for "
             ^(S.to_string scru_sv)^" : "^(Type.to_string typ)
 
 and doIt_option_cases env op cases = 
@@ -739,7 +746,7 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
       args_t in
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
-  let (body_sv,env',_) = doIt_expr {env with te=te'} body in
+  let (body_sv,env',_) = doIt_expr {env with te=te'; is_inv=true} body in
   let diff_te = env'.te -- env.te in
   let vc = (diff_te, env'.pe, P.of_sv body_sv) in
     begin
@@ -748,12 +755,49 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
       (body_sv, env', [vc])
     end
 
+let get_arg_condition (oper) (eff1) (eff2) (schemas) : S.t list = 
+  let doIt_schema (oper) (eff1) (eff2) (tname,ts) =
+    let Tableschema.T {eff_cons} = ts in
+    let doIt_eff_cons (S.Var y) (eff1) (eff2) (Effcons.T x) = 
+      let prefix = Ident.name tname in
+      let suffix = Ident.name x.name in
+      if (Ident.name y) = prefix^"_"^suffix then
+        let args = List.map 
+                 (fun (id,colty) -> (id, type_of_coltype colty schemas))
+                 x.args_t in
+        List.map (fun (id,typ) -> 
+            let mkkey_ty = L.mkkey (Type.to_string typ) in
+            let sv1 = S.app (mkkey_ty, [S.App (id, [S.Var eff1])]) in
+            let sv2 = S.app (mkkey_ty, [S.App (id, [S.Var eff2])]) in
+            S.app (L.hbid, [sv1;sv2])) args
+      else [] in
+    List.map (doIt_eff_cons oper eff1 eff2) eff_cons in
+  let all_cons = List.concat @@ List.concat @@
+              List.map (doIt_schema oper eff1 eff2) schemas in
+  all_cons 
+
+let extract_oper_cons (schemas) : S.t list = 
+  let doIt_schema (tname,ts) =
+    let Tableschema.T {eff_cons} = ts in
+    let doIt_eff_cons (Effcons.T x) = 
+      let prefix = Ident.name tname in
+      let suffix = Ident.name x.name in
+      let args = List.map 
+               (fun (id,colty) -> (id, type_of_coltype colty schemas))
+               x.args_t in
+      S.Var (Ident.create @@ prefix^"_"^suffix) in
+    List.map doIt_eff_cons eff_cons in
+  let all_cons = List.concat @@ 
+              List.map doIt_schema schemas in
+  all_cons 
+
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 11 (* k'*) in
+  let _ = k := 3 (* k'*) in
   let _ = eff_consts := 
           List.tabulate !k (fun i -> 
                               Ident.create @@ "E"^(string_of_int i)) in
   let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
+  let oper_cons = extract_oper_cons schemas in
   let tmp_name1 =  "do_new_tweet" in
   let tmp_name2 =  "inv_fkey" in
   let my_fun1 = try List.find (fun (Fun.T x) -> 
@@ -771,9 +815,11 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                   (* An additional NOP effect for technical reasons *)
                   (Kind.Enum (!eff_consts@[L.e_nop])) ke in
   let te = TE.add ssn2 Type.ssn (TE.add ssn1 Type.ssn te) in
+  TE.print te;
   let env1 = {txn=Fun.name my_fun1; seqno=0; 
               ssn=ssn1; ke=ke; te=te;
               pe=pe; path=[]; ve=ve; 
+              is_inv = false;
               show=(fun eff -> S.ConstBool true);
               effs=[]; 
               (*te=TE.add ssn1 Type.ssn te List.fold_left 
@@ -795,6 +841,20 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       | _ -> failwith "Specverify.doIt: Unexpected" in
   let (effs1, effs2) = (env1'.effs, env2'.effs) in
   let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
+  let gen_or_list_successor opers eff1 eff2 = 
+      let (op::ops) = opers in 
+      let cond_for_op = get_arg_condition op eff1 eff2 schemas in
+      let eq_cond = S.Eq (S.App (L.oper, [S.Var eff2]), op) in
+      let same_op_cond = S.And (eq_cond :: cond_for_op) in
+      let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
+      P.of_sv @@ (S.Or (same_op_cond::or_list)) in
+  let rec comm_assertion eff1 eff2 opers = 
+    match opers with
+    | x::xs -> if (List.length xs) > 0 then 
+                  P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), gen_or_list_successor (x::xs) eff1 eff2) :: (comm_assertion eff1 eff2 xs) 
+               else [P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff2]), x))]
+    | _ -> [] in
+  let comm_assertions = List.flatten @@ List.mapi (fun i eff -> if i<(!k-1) then comm_assertion eff (List.nth !eff_consts (i+1)) oper_cons else []) !eff_consts in
   let mk_ssn_cstr ssn_id effs = 
       P.forall Type.eff 
         (fun v -> 
@@ -810,7 +870,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
     begin
       is_pre := false;
       List.map P.ground @@ 
-          List.concat [wr_prog; inv_prog; [mk_ssn_cstr ssn1 effs1; 
+          List.concat [wr_prog; inv_prog; comm_assertions; [mk_ssn_cstr ssn1 effs1; 
                                            mk_ssn_cstr ssn2 effs2]]
     end in
   let post = 
@@ -821,8 +881,9 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let new_te = TE.fold_name 
                  (fun id ty te -> 
                     try (ignore @@ TE.find_name (Ident.name id) te; 
-                         failwith @@ (Ident.name id)^" variable \
-                                  duplicate found. Please rename.")
+                          raise Not_found)
+                         (*failwith @@ (Ident.name id)^" variable \
+                                  duplicate found. Please rename.")*)
                     with Not_found -> TE.add id ty te) te2 te1 in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
                                 pre=pre; prog=prog; post=post} in
