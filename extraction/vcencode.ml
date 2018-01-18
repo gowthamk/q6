@@ -39,6 +39,8 @@ let (fmap : (string,FuncDecl.func_decl) Hashtbl.t) = Hashtbl.create 47
 let fresh_bv_name = gen_name "bv" 
 let fresh_bv () = Ident.create @@  fresh_bv_name ()
 
+type  bv_t = {id:Ident.t;const:Z3.Expr.expr; name:string;}
+
 let reset () = 
   begin
     ctx := mk_new_ctx ();
@@ -63,6 +65,14 @@ let const_of_id id = const_of_name @@ Ident.name id
 let all_mkkey_funs () = Hashtbl.fold (fun name func acc -> 
                           if Str.string_match (Str.regexp "^mkkey_") name 0
                           then func::acc else acc) fmap []
+(*let new_bv ?sort () = 
+  let s = match sort with | Some s -> s
+                          | _ -> raise Not_found in
+  let bv_name = fresh_bv_name () in
+  let bv_id = Ident.create bv_name in
+  let bv_const = mk_const_s bv_name s in
+    {name=bv_name; id=bv_id; const=bv_const}*)
+
 (*
  * Z3 API for the current ctx
  *)
@@ -191,10 +201,9 @@ let declare_enum_type (ty:Type.t) (consts: Ident.t list) =
                       Datatype.get_constructors s_ty in
   begin
     Hashtbl.add tmap ty s_ty;
-    List.iter (fun (c,s_c) -> 
+    List.iter (fun (c,s_c) ->       
                  Hashtbl.add cmap (Ident.name c) s_c)
       (List.zip consts s_consts);
-    printf "%s added\n" (Type.to_string ty);
   end
 
 let declare_variant_type (ty:Type.t) (consts: Cons.t list) =
@@ -208,9 +217,10 @@ let declare_variant_type (ty:Type.t) (consts: Cons.t list) =
   begin
     Hashtbl.add tmap ty s_ty;
     List.iter (fun (Cons.T {name},s_c) -> 
+                 (*let _ = printf "%s added\n" (Ident.name name) in*)
                  Hashtbl.add cmap (Ident.name name) s_c)
       (List.zip consts s_consts);
-    printf "%s added\n" (Type.to_string ty);
+    (*printf "%s added\n" (Type.to_string ty);*)
   end
 
 let declare_extendible_type (ty:Type.t) (consts: Ident.t list) =
@@ -224,7 +234,7 @@ let declare_extendible_type (ty:Type.t) (consts: Ident.t list) =
                    Hashtbl.add cmap (Ident.name c) s_c)
         (List.zip consts s_consts);
       _assert distinct_asn;
-      printf "%s added\n" (Type.to_string ty);
+      (*printf "%s added\n" (Type.to_string ty);*)
     end
 
 let declare_types (ke,te) =
@@ -393,6 +403,94 @@ let assert_ba_contracts () =
                                           forallE2 i] in
     _assert_all asns
 
+let assert_rubis_contracts () =
+  let do_withdraw = const_of_name "do_withdraw_wallet" in
+  (*let do_txn = const_of_name "do_txn" in*)
+  let wd = const_of_name "Wallet_WithdrawFromWallet" in
+  let dp = const_of_name "Wallet_DepositToWallet" in
+  let gb = const_of_name "Wallet_GetBalance" in
+  let amt = fun_of_str "amt" in
+  (* Every withdraw is visible to getbalance. *)
+  let f a b =
+    mk_and [oper(a) @= wd; 
+            oper(b) @= gb; 
+            txn(b) @= do_withdraw; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let g a b c d =
+    mk_and [oper(a) @= dp; oper(b) @= gb; 
+            oper(c) @= wd; so(b,c);
+            txn(b) @= do_withdraw; 
+            sametxn(b,c); 
+            oper(d) @= gb; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  (* Additional high-level invariant: ∀e. amt(e) >= 0 *)
+  let h a = (mk_app amt [a]) @>= (mk_numeral_i 0) in
+  (* Every withdraw is visible to the current transaction's getbalance *)
+  let i a b =
+    mk_and [oper(a) @= wd;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let asns = List.map expr_of_quantifier [forallE2 f; 
+                                          forallE4 g; 
+                                          forallE1 h;
+                                          forallE2 i] in
+    _assert_all asns
+
+let assert_tpcc_contracts () = 
+  let nwordtxn = const_of_name "do_new_order_txn" in
+  let ptxn = const_of_name "do_payment_txn" in
+  let dget = const_of_name "District_Get" in
+  let oget = const_of_name "Order_Get" in
+  let dsetnoid = const_of_name "District_SetNextOID" in
+  let oadd = const_of_name "Order_Add" in
+  let wsetytd = const_of_name "Warehouse_SetYTD" in
+  let dsetytd = const_of_name "District_SetYTD" in
+  let dgetytd = const_of_name "District_GetYTD" in
+  let wgetytd = const_of_name "Warehouse_GetYTD" in
+  let hget = const_of_name "History_Get" in
+  let hadd = const_of_name "History_Append" in
+  let f a b c d =
+    mk_and [oper(a) @= dsetnoid;
+            txn(a) @= nwordtxn;
+            oper(b) @= dget;
+            oper(c) @= oadd;
+            oper(d) @= oget;
+            vis(a, b);
+            so(a, c);
+            so(b, d);
+            sameobj(a, b);
+            sameobj(c, d);
+            sametxn(a,c)] @=> vis(c,d) in
+  let g a b c d = 
+    mk_and [oper(a) @= dsetytd;
+            oper(b) @= wsetytd;
+            oper(c) @= dgetytd;
+            oper(d) @= wgetytd;
+            txn(a) @= ptxn;
+            sametxn(a,b);
+            so(b, a);
+            so(d, c);
+            sameobj(a, c);
+            sameobj(b, d);
+            sametxn(c, d);
+            vis(b, d)] @=> vis(a, c) in
+  let h a b c d = 
+    mk_and [oper(a) @= dsetytd;
+            oper(b) @= hadd;
+            oper(c) @= dgetytd;
+            oper(d) @= hget;
+            txn(a) @= ptxn;
+            sametxn(a,b);
+            so(a, b);
+            so(c, d);
+            sameobj(a, c);
+            sameobj(b, d);
+            sametxn(c, d);
+            vis(a, c)] @=> vis(b, d) in
+  (*let g a b = (mk_app ts [a]) @!= (mk_app ts [b]) in*)
+  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
+    _assert_all asns
+
 let assert_contracts () = assert_mb_contracts ()
 (*
  * Encoding
@@ -425,10 +523,13 @@ let rec doIt_sv sv =
       | ConstBool true -> mk_true ()
       | ConstBool false -> mk_false ()
       | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
+      | Simplified sv1 -> doIt_sv sv1
+      (*| Option None -> mk_true ()
+      | Option Some x -> f x *)
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
 
 let rec doIt_pred p = match p with
-  | P.BoolExpr v -> doIt_sv v
+  | P.BoolExpr v -> (*let _ = Printf.printf "%s\n" (S.to_string v) in*) doIt_sv v
   | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
   | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
   | P.Forall (ty,f) -> expr_of_quantifier @@
@@ -479,21 +580,25 @@ let discharge (txn_id, vc) =
       print_string "(get-model)\n";
       Printf.printf "\n*********************\n";
       flush_all ();
-      check_sat ();
+      Printf.printf "Time before execution of check_sat: %fs\n" (Sys.time());
+      check_sat ()
     end
 
 let doIt vcs = 
   if not (Log.open_ "z3.log") then
     failwith "Log couldn't be opened."
   else
-    let res = discharge (List.hd vcs) in
-    begin
-      (match res with 
-        | SATISFIABLE -> printf "SAT\n"
-        | UNSATISFIABLE -> 
-            printf "%s verified!\n" 
-              (Ident.name @@ fst @@ List.hd vcs)
-        | UNKNOWN -> printf "UNKNOWN\n");
-      Printf.printf "Disposing...\n";
-      Gc.full_major ();
-    end
+    let _ = List.map (fun vc ->
+      let res = discharge vc in
+      begin
+        (match res with 
+          | SATISFIABLE -> printf "SAT\n"
+          | UNSATISFIABLE -> 
+              printf "Verified!\n" 
+                (*(Ident.name @@ fst @@ vc)*)
+          | UNKNOWN -> printf "UNKNOWN\n");
+        Printf.printf "Disposing...\n";
+        Printf.printf "Time after execution of check_sat: %fs\n" (Sys.time());
+      end
+    ) vcs in
+    Gc.full_major ()

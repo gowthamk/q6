@@ -139,9 +139,16 @@ let extract_funs (str_items) =
             let open Types in
             let arrow_t = vb_expr.exp_type.desc in
             let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
+            (*VERRRRRRRY DIRTY HACK. FIX IT!*)
+            (* For some reason, when a function has > 2 args, arg_ts doesn't get any arguments after the second one*)
+            (* Making arg_ts and arg the same length, by appending the type of the last arg to arg_ts*)
+            let rec hack_arg_ts arg_ts arg len =
+              if List.length arg_ts = len then arg_ts else hack_arg_ts (arg_ts@[arg]) arg len in
+            let arg_ts' = if (List.length args) = (List.length arg_ts) then arg_ts else hack_arg_ts arg_ts (List.hd (List.rev arg_ts)) (List.length args) in
+            (*DIRTY HACK ENDS*) 
               Fun.make ~name: (Ident.create loc.txt) 
                    ~rec_flag: rec_flag
-                   ~args_t: (List.zip args arg_ts) 
+                   ~args_t: (List.zip args arg_ts') 
                    ~res_t: res_t ~body: body in
             if String.length loc.txt >= 4 && 
                Str.string_before loc.txt 4 = "get_" then
@@ -161,6 +168,7 @@ let extract_funs (str_items) =
                        let rec_flag = match rec_flag with 
                          | Nonrecursive -> false
                          | Recursive -> true in
+                         (*let _ = printf "Valbinds:%d\n" (List.length valbinds) in*)
                          List.iter (doIt_valbind rec_flag) valbinds
                    | _ -> ()) str_items;
       (!reads, !writes, !invs, !aux)

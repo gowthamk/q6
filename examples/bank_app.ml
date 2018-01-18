@@ -72,6 +72,6 @@ let do_withdraw acc_id a =
       (BA_table.append acc_id (BA.Withdraw {amt=a}); true)
     else false
 
-let inv_bal acc_id' = 
+let inv_fun acc_id' = 
   let bal = get_balance acc_id' in
     bal >= 0
