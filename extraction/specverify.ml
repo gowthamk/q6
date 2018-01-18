@@ -9,7 +9,7 @@ module P = Predicate
 module VC = Vc
 
 exception Inconsistency
-let unmanifest_list = Ident.create @@ "!L";;
+let unmanifest_list = Ident.create @@ "!P";;
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
 type env = {txn: Ident.t; 
             ssn: Ident.t;
@@ -29,13 +29,16 @@ type st_t = TE.t * Predicate.t list
 
 let ppf = Format.std_formatter
 
-let pervasives = [("Pervasives.@@", "@@"); 
+let pervasives = [("Pervasives.@@", "@@");
+		              ("Pervasives.=", "="); 
                   ("Pervasives.raise", "raise"); 
                   ("Uuid.create", "Uuid.create");
                   ("Pervasives.&&", "&&"); 
                   ("Pervasives.||", "||"); 
                   ("Pervasives.+", "+"); 
+                  ("Pervasives.*", "*"); 
                   ("Pervasives.-", "-");
+                  ("Pervasives.<>", "<>");
                   ("Pervasives.>", ">");
                   ("Pervasives.>=", ">=");
                   ("Pervasives.<", "<");
@@ -101,7 +104,7 @@ let mk_vc env grd =
   (*let _ = printf "-- Assumps are: %s --\n" 
     (String.concat ", " @@ List.map S.to_string assumps) in*)
   let conseqP = 
-    P.of_sv @@ S.simplify assumps grd in
+    P.of_sv @@ S.top_simplify assumps grd in
   let new_vc = (env.te, env.pe, conseqP) in
   (* 
    * Assume that VC is valid for further analyis.
@@ -241,12 +244,21 @@ let doIt_append env typed_sv1 sv2 =
   let effs' = y::(env.effs) in
     {env with seqno=seqno';te=te'; pe=pe'; effs=effs'}
 
+(* Generates a random string for identifying beginning and end in output log *)
+let gen_passwd length =
+    let gen() = match Random.int(26+26+10) with
+        n when n < 26 -> int_of_char 'a' + n
+      | n when n < 26 + 26 -> int_of_char 'A' + n - 26
+      | n -> int_of_char '0' + n - 26 - 26 in
+    let gen _ = String.make 1 (char_of_int(gen())) in
+    String.concat "" (Array.to_list (Array.init length gen));;
+
 let doIt_get env typed_sv1 sv2 = 
   let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
   let vis (id1,id2) = S.App (L.vis, [S.Var id1;
                                       S.Var id2]) in
   let grded_eff (id1,id2) = 
-      S.ITE (S.And [vis (id1,id2); (env.show id1)], 
+      S.ite (S.And [vis (id1,id2); (env.show id1)], 
              S.Option (Some (S.Var id1)), 
              S.Option None) in
   (*
@@ -267,6 +279,10 @@ let doIt_get env typed_sv1 sv2 =
   let env' = {env with seqno=seqno'; te=te'; pe=pe'; effs=effs'} in
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
+
+let isFirstFold = ref true;;
+
+let (unmanifest_list_map : (int*int*int*int, Ident.t) Hashtbl.t) = Hashtbl.create 2017
 
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let _ = if List.length fun_t.args_t = List.length arg_svs then ()
@@ -312,262 +328,281 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
 and doIt_expr env (expr:Typedtree.expression) 
       : S.t * env * VC.seq_t list = 
   let open Path in
-  (* let _ = Printtyped.expression 0 (Format.std_formatter) expr in*)
-  let ret sv = (sv, env, []) in
-  let doIt_exprs env exprs = 
-    let (svs, (env',vcs)) = List.map_fold_left 
-                              (fun (env,vcs) e -> 
-                                let (sv,env',new_vcs) = doIt_expr env e in
-                                  (sv, (env', vcs @ new_vcs))) 
-                              (env,[]) exprs in
-      (svs,env',vcs) in
-  let is_table_mod id = 
-    let tokens = Str.split (Str.regexp "_") (Ident.name id) in
-      (List.length tokens >= 2) && (List.hd (List.rev tokens) = "table") in
-  match expr.exp_desc with
-    (* id *)
-    | Texp_ident (path,_,_) -> 
-        let names = Path.all_names path in
-        let name = String.concat "." names in
-          begin
-            try ret (VE.find_name name env.ve)
-            with Not_found -> 
-              try let _ = TE.find_name name env.te in 
-                ret (S.Var (Ident.create name))
+    (*let randString = gen_passwd 3 in
+    let _ = printf "%s Starting symbolic execution of (%d, %d --> %d, %d)\n" randString expr.exp_loc.loc_start.pos_lnum (expr.exp_loc.loc_start.pos_cnum - expr.exp_loc.loc_start.pos_bol) expr.exp_loc.loc_end.pos_lnum (expr.exp_loc.loc_end.pos_cnum - expr.exp_loc.loc_end.pos_bol) in*)
+    let t1 = Sys.time() in
+    let ret sv = (sv, env, []) in
+    let doIt_exprs env exprs = 
+      let (svs, (env',vcs)) = List.map_fold_left 
+                                (fun (env,vcs) e -> 
+                                  let (sv,env',new_vcs) = doIt_expr env e in
+                                    (sv, (env', vcs @ new_vcs))) 
+                                (env,[]) exprs in
+        (svs,env',vcs) in
+    let is_table_mod id = 
+      let tokens = Str.split (Str.regexp "_") (Ident.name id) in
+        (List.length tokens >= 2) && (List.hd (List.rev tokens) = "table") in
+    let res = match expr.exp_desc with
+      (* id *)
+      | Texp_ident (path,_,_) -> 
+          let names = Path.all_names path in
+          let name = String.concat "." names in
+            begin
+              try ret (VE.find_name name env.ve)
               with Not_found -> 
-                try ret @@ S.Var (Ident.create @@ 
-                                   List.assoc name pervasives) 
+                try let _ = TE.find_name name env.te in 
+                  ret (S.Var (Ident.create name))
                 with Not_found -> 
-                  failwith @@ name^" not found\n"
-          end
-    (* constant *)
-    | Texp_constant const ->
-        let open Asttypes in 
-          (match const with 
-             | Const_int i -> ret (S.ConstInt i)
-             | Const_string (s, None) -> ret (S.ConstString s)
-             | Const_string (s, Some s') -> ret (S.ConstString (s^s'))
-             | _ -> failwith "Texp_constant Unimpl.")
-    (* e1::e2 *)
-    | Texp_construct (_,cons_desc, [arge1; arge2]) 
-      when (cons_desc.cstr_name = "::") -> 
-        let (arg_sv1, env', vcs1) = doIt_expr env arge1 in
-        let (arg_sv2, env'', vcs2) = doIt_expr env' arge2 in
-        let sv = S.cons (arg_sv1,arg_sv2) in
-          (sv,env'',vcs1@vcs2)
-    (* true *)
-    | Texp_construct (_,cons_desc, [])
-      when (cons_desc.cstr_name = "true") -> ret (S.ConstBool true)
-    (* false *)
-    | Texp_construct (_,cons_desc, [])
-      when (cons_desc.cstr_name = "false") -> ret (S.ConstBool false)
-    (* [] *)
-    | Texp_construct (_,cons_desc, [])
-      when (cons_desc.cstr_name = "[]") -> ret (S.nil)
-    (* None *)
-    | Texp_construct (_,cons_desc, [])
-      when (cons_desc.cstr_name = "None") -> ret (S.none)
-    (* Some e *)
-    | Texp_construct (_,cons_desc, [arge])
-      when (cons_desc.cstr_name = "Some") -> 
-        let (arg_v, env', vcs) = doIt_expr env arge in
-          (S.some arg_v, env', vcs)
-    (* () *)
-    | Texp_construct (_,cons_desc, [])
-      when (cons_desc.cstr_name = "()") -> ret (S.ConstUnit)
-    (* EffCons e  *)
-    | Texp_construct (li_loc,cons_desc,arg_exprs) -> 
-        let li = let open Asttypes in li_loc.txt in
-        let cstr_name = String.concat "." @@ Longident.flatten li in
-        let cstr_sv = try VE.find_name cstr_name env.ve 
-                      with Not_found -> failwith @@ 
-                              "Unknown constructor: "^cstr_name in
-        let cons_t = match cstr_sv with 
-          | S.EffCons x -> x 
-          | _ -> failwith "Texp_construct: Unexpected" in
-        let (arg_svs,env',arg_vcs) = doIt_exprs env arg_exprs in
-        let arg_sv_op = match arg_svs with
-          | [] -> None | [arg_sv] -> Some arg_sv
-          | _ -> failwith @@ cstr_name^" has more than 1 arg" in
-        let sv = S.NewEff (cons_t, arg_sv_op) in
-          (sv,env',arg_vcs)
-    (* {id1=e1; id2=e2; ..}*)
-    | Texp_record (flds,None) -> 
-        let fld_exprs = List.map (fun (_,_,z) -> z) flds in
-        let (fld_svs,env',vcs) = doIt_exprs env fld_exprs in
-        let id_of_ld ld = Ident.create @@ ld.lbl_name in
-        let fld_ids = List.map (fun (_,ld,_) -> id_of_ld ld) flds in
-        let sv = S.Record (List.combine fld_ids fld_svs) in
-          (sv,env',vcs)
-    | Texp_record (flds,Some e) -> failwith "Texp_record: Unimpl."
-    (* Obj_table.append e1 e2 *)
-    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
-                  [(Asttypes.Nolabel,Some e1); 
-                   (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
-        let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
-        let S.NewEff (cons_t, _) = sv2 in
-        let typ1 = type_of_tye env.ke e1.exp_type in
-        let env'' = doIt_append env' (sv1,typ1) sv2 in
-          (S.ConstUnit, env'', vcs)
-    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
-                  args) when (List.length args <> 2) ->
-        failwith @@ (Ident.name id)^".append needs 2 arguments"
-    (* Obj_table.get e1 e2 *)
-    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
-                  [(Asttypes.Nolabel,Some e1); 
-                   (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
-        let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
-        let typ1 = type_of_tye env.ke e1.exp_type in
-        let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
-          (effs_sv, env'', vcs)
-    | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
-                  args) when (List.length args <> 2) ->
-        failwith @@ (Ident.name id)^".get needs 2 arguments"
-    (* f e *) (* (\x.e) e *)
-    | Texp_apply (e1, largs) -> 
-        let strf = Format.str_formatter in
-        let _ = Format.fprintf strf "The type of fn being applied:\n" in
-        let _  = Printtyp.type_expr strf e1.exp_type in
-        let _ = Printf.printf "%s\n" @@ Format.flush_str_formatter () in
-        let (sv1,env',vcs1) = doIt_expr env e1 in
-        let e2s = map_snd_opts largs in
-        let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
-        let (res_sv, res_env, res_vcs) = match sv1 with
-          (* UUID.create () *)
-          | S.Var id when (Ident.name id = "Uuid.create") -> 
-              let new_uuid = Ident.create @@ fresh_uuid_name () in
-              let uuids = match KE.find_name "UUID" env.ke with
-                | Kind.Extendible prev -> !prev
-                | _ -> failwith "UUID Unexpected" in
-              let ke' = KE.add (Ident.create "UUID")
-                          (Kind.Extendible (ref @@ new_uuid::uuids))
-                          env.ke in
-                (S.Var new_uuid, {env with ke=ke'}, vcs1 @ vcs2)
-          | S.Var id when (Ident.name id = "raise") -> 
-              let _ = match sv2s with 
-                | [S.NewEff (Cons.T {name}, None)]
-                    when (Ident.name name = "Inconsistency") -> ()
-                | _ -> failwith "Not an Inconsistency exception. Unimpl." in
-              let _ = print_string "raising inconsistency\n" in
-                raise Inconsistency
-          | S.Var id when (Ident.name id = "&&") -> 
-              (S.And sv2s, env'', vcs1 @ vcs2)
-          | S.Var id when (Ident.name id = "||") -> 
-              (S.Or sv2s, env'', vcs1 @ vcs2)
-          | S.Var id -> (S.App (id,sv2s), env'', vcs1 @ vcs2)
-          | S.Fun (Fun.T fun_t) -> 
-              (*
-               * OCaml has no explicit type applications. We reconstruct
-               * type arguments by unifying function type with function
-               * expression type.
-               *)
-              let arrow_tye = Misc.to_tye @@ 
-                              Misc.curry (List.map snd fun_t.args_t)
-                                 fun_t.res_t in
-              let tye_binds = Misc.unify_tyes arrow_tye e1.exp_type in
-              let (res_sv, res_env, vcs3) = 
-                    doIt_fun_app env'' (Fun.T fun_t) tye_binds sv2s in
-                (res_sv, res_env, vcs1 @ vcs2 @ vcs3)
-          | _ -> failwith "Texp_apply: Unexpected" in
-          (res_sv, res_env, res_vcs)
-    (* let id = e1 in e2 *)
-    | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_var (lhs_id,_)};
-                           vb_expr=e1}], e2) -> 
-        let (sv1,env',vcs1) = doIt_expr env e1 in
-        let sv1 = match (ast_rec, sv1) with 
-          | (Asttypes.Recursive, S.Fun (Fun.T fun_t)) -> 
-              S.Fun (Fun.T {fun_t with rec_flag=true})
-          | _ -> sv1 in
-        let ve' = VE.add lhs_id sv1 env'.ve in
-        let (sv2,env'',vcs2) = doIt_expr {env' with ve=ve'} e2 in
-          (sv2,env'',vcs1 @ vcs2)
-    | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_any};
-                           vb_expr=e1}], e2) -> 
-        let (sv1,env',vcs1) = doIt_expr env e1 in
-        let (sv2,env'',vcs2) = doIt_expr env' e2 in
-          (sv2,env'',vcs1 @ vcs2)
-    (* \x.e *)
-    | Texp_function (_,[case],_) ->  
-        let (args,body) = Misc.extract_lambda case in
-        let open Types in
-        let arrow_t = expr.exp_type.desc in
-        (*let _ = Printtyp.type_expr Format.std_formatter 
-                      expr.exp_type in *)
-        let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
-        let (fun_t:Fun.t) = Fun.make ~rec_flag: false
-                            ~args_t: (List.zip args arg_ts) 
-                            ~res_t: res_t ~body: body 
-                            (* This is default, yet doesn't 
-                             * compile if removed. Fixit. *)
-                            ~name: Fun.anonymous in
-          ret @@ S.Fun fun_t
-    | Texp_function (_,cases,_) -> 
-        failwith "Lambdas with multiple cases Unimpl."
-    | Texp_match (scrutinee,cases,[],_) ->
-        let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
-        let exptyp = type_of_tye env.ke expr.exp_type in
-        let scrutyp = type_of_tye env.ke scrutinee.exp_type in
-        (*let strf = Format.str_formatter in
-        let _ = Printtyp.type_expr strf expr.exp_type in
-        let _ = Printf.printf "Type of the match expression:%s = %s\n" 
-                  (Format.flush_str_formatter ()) (Type.to_string exptyp) in
-        let _ = Printtyp.type_expr strf scrutinee.exp_type in
-        let _ = Printf.printf "Type of scrutinee: %s = %s\n" 
-                  (Format.flush_str_formatter ()) (Type.to_string scrutyp) in*)
-        let (sv,env'',vcs2)  = let open S in match scru_sv with
-          (* List and Option are special cases where the interpreter 
-           * does some the reasoning. *)
-          | List ([],Some l) -> 
-              let _ = print_string "unmanifest during match\n" in
-              let x = unmanifest_list (*Ident.create @@ fresh_name ()*) in
-              let xte = TE.add x exptyp env'.te in
+                  try ret @@ S.Var (Ident.create @@ 
+                                     List.assoc name pervasives) 
+                  with Not_found -> 
+                    failwith @@ name^" not found\n"
+            end
+      (* constant *)
+      | Texp_constant const ->
+          let open Asttypes in 
+            (match const with 
+               | Const_int i -> ret (S.ConstInt i)
+               | Const_string (s, None) -> ret (S.ConstString s)
+               | Const_string (s, Some s') -> ret (S.ConstString (s^s'))
+               | _ -> failwith "Texp_constant Unimpl.")
+      (* e1::e2 *)
+      | Texp_construct (_,cons_desc, [arge1; arge2]) 
+        when (cons_desc.cstr_name = "::") -> 
+          let (arg_sv1, env', vcs1) = doIt_expr env arge1 in
+          let (arg_sv2, env'', vcs2) = doIt_expr env' arge2 in
+          let sv = S.cons (arg_sv1,arg_sv2) in
+            (sv,env'',vcs1@vcs2)
+      (* true *)
+      | Texp_construct (_,cons_desc, [])
+        when (cons_desc.cstr_name = "true") -> ret (S.ConstBool true)
+      (* false *)
+      | Texp_construct (_,cons_desc, [])
+        when (cons_desc.cstr_name = "false") -> ret (S.ConstBool false)
+      (* [] *)
+      | Texp_construct (_,cons_desc, [])
+        when (cons_desc.cstr_name = "[]") -> ret (S.nil)
+      (* None *)
+      | Texp_construct (_,cons_desc, [])
+        when (cons_desc.cstr_name = "None") -> ret (S.none)
+      (* Some e *)
+      | Texp_construct (_,cons_desc, [arge])
+        when (cons_desc.cstr_name = "Some") -> 
+          let (arg_v, env', vcs) = doIt_expr env arge in
+            (S.some arg_v, env', vcs)
+      (* () *)
+      | Texp_construct (_,cons_desc, [])
+        when (cons_desc.cstr_name = "()") -> ret (S.ConstUnit)
+      (* EffCons e  *)
+      | Texp_construct (li_loc,cons_desc,arg_exprs) -> 
+          let li = let open Asttypes in li_loc.txt in
+          let cstr_name = String.concat "." @@ Longident.flatten li in
+          let cstr_sv = try VE.find_name cstr_name env.ve 
+                        with Not_found -> failwith @@ 
+                                "Unknown constructor: "^cstr_name in
+          let cons_t = match cstr_sv with 
+            | S.EffCons x -> x 
+            | _ -> failwith "Texp_construct: Unexpected" in
+          let (arg_svs,env',arg_vcs) = doIt_exprs env arg_exprs in
+          let arg_sv_op = match arg_svs with
+            | [] -> None | [arg_sv] -> Some arg_sv
+            | _ -> failwith @@ cstr_name^" has more than 1 arg" in
+          let sv = S.NewEff (cons_t, arg_sv_op) in
+            (sv,env',arg_vcs)
+      (* {id1=e1; id2=e2; ..}*)
+      | Texp_record (flds,None) -> 
+          let fld_exprs = List.map (fun (_,_,z) -> z) flds in
+          let (fld_svs,env',vcs) = doIt_exprs env fld_exprs in
+          let id_of_ld ld = Ident.create @@ ld.lbl_name in
+          let fld_ids = List.map (fun (_,ld,_) -> id_of_ld ld) flds in
+          let sv = S.Record (List.combine fld_ids fld_svs) in
+            (sv,env',vcs)
+      | Texp_record (flds,Some e) -> failwith "Texp_record: Unimpl."
+      (* Obj_table.append e1 e2 *)
+      | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
+                    [(Asttypes.Nolabel,Some e1); 
+                     (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
+          let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
+          let S.NewEff (cons_t, _) = sv2 in
+          let typ1 = type_of_tye env.ke e1.exp_type in
+          let env'' = doIt_append env' (sv1,typ1) sv2 in
+            (S.ConstUnit, env'', vcs)
+      | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"append",_),_,_)},
+                    args) when (List.length args <> 2) ->
+          failwith @@ (Ident.name id)^".append needs 2 arguments"
+      (* Obj_table.get e1 e2 *)
+      | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
+                    [(Asttypes.Nolabel,Some e1); 
+                     (Asttypes.Nolabel,Some e2)]) when (is_table_mod id) -> 
+          let ([sv1;sv2],env',vcs) = doIt_exprs env [e1;e2] in
+          let typ1 = type_of_tye env.ke e1.exp_type in
+          let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
+            (effs_sv, env'', vcs)
+      | Texp_apply ({exp_desc=Texp_ident (Pdot (Pident id,"get",_),_,_)},
+                    args) when (List.length args <> 2) ->
+          failwith @@ (Ident.name id)^".get needs 2 arguments"
+      (* f e *) (* (\x.e) e *)
+      | Texp_apply (e1, largs) -> 
+          (*let strf = Format.str_formatter in
+          let _ = Format.fprintf strf "The type of fn being applied:\n" in
+          let _ = Printf.printf "Line number: %d\n" e1.exp_loc.loc_start.pos_lnum in
+          let _  = Printtyp.type_expr strf e1.exp_type in
+          let _ = Printf.printf "%s\n" @@ Format.flush_str_formatter () in*)
+          let (sv1,env',vcs1) = doIt_expr env e1 in
+          let e2s = map_snd_opts largs in
+          let (sv2s,env'',vcs2) = doIt_exprs env' e2s in
+          let (res_sv, res_env, res_vcs) = match sv1 with
+            (* UUID.create () *)
+            | S.Var id when (Ident.name id = "Uuid.create") -> 
+                let new_uuid = Ident.create @@ fresh_uuid_name () in
+                let uuids = match KE.find_name "UUID" env.ke with
+                  | Kind.Extendible prev -> !prev
+                  | _ -> failwith "UUID Unexpected" in
+                let ke' = KE.add (Ident.create "UUID")
+                            (Kind.Extendible (ref @@ new_uuid::uuids))
+                            env.ke in
+                  (S.Var new_uuid, {env with ke=ke'}, vcs1 @ vcs2)
+            | S.Var id when (Ident.name id = "raise") -> 
+                let _ = match sv2s with 
+                  | [S.NewEff (Cons.T {name}, None)]
+                      when (Ident.name name = "Inconsistency") -> ()
+                  | _ -> failwith "Not an Inconsistency exception. Unimpl." in
+                let _ = print_string "raising inconsistency\n" in
+                  raise Inconsistency
+            | S.Var id when (Ident.name id = "&&") -> 
+                (S.And sv2s, env'', vcs1 @ vcs2)
+            | S.Var id when (Ident.name id = "||") -> 
+                (S.Or sv2s, env'', vcs1 @ vcs2)
+            | S.Var id -> (S.App (id,sv2s), env'', vcs1 @ vcs2)
+            | S.Fun (Fun.T fun_t) -> 
+                (*
+                 * OCaml has no explicit type applications. We reconstruct
+                 * type arguments by unifying function type with function
+                 * expression type.
+                 *)
+                let arrow_tye = Misc.to_tye @@ 
+                                Misc.curry (List.map snd fun_t.args_t)
+                                   fun_t.res_t in
+                let tye_binds = Misc.unify_tyes arrow_tye e1.exp_type in
+                let (res_sv, res_env, vcs3) = 
+                      doIt_fun_app env'' (Fun.T fun_t) tye_binds sv2s in
+                  (res_sv, res_env, vcs1 @ vcs2 @ vcs3)
+            | _ -> failwith "Texp_apply: Unexpected" in
+            (res_sv, res_env, res_vcs)
+            (*else (ConstBool true, env, [])*)
+      | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_var (lhs_id,_)};
+                             vb_expr=e1}], e2) -> 
+          let (sv1,env',vcs1) = doIt_expr env e1 in
+          let sv1 = match (ast_rec, sv1) with 
+            | (Asttypes.Recursive, S.Fun (Fun.T fun_t)) -> 
+                S.Fun (Fun.T {fun_t with rec_flag=true})
+            | _ -> sv1 in
+          let ve' = VE.add lhs_id sv1 env'.ve in
+          let (sv2,env'',vcs2) = doIt_expr {env' with ve=ve'} e2 in
+            (sv2,env'',vcs1 @ vcs2)
+      | Texp_let (ast_rec, [{vb_pat={pat_desc=Tpat_any};
+                             vb_expr=e1}], e2) -> 
+          let (sv1,env',vcs1) = doIt_expr env e1 in
+          let (sv2,env'',vcs2) = doIt_expr env' e2 in
+            (sv2,env'',vcs1 @ vcs2)
+      (* \x.e *)
+      | Texp_function (_,[case],_) ->  
+          let (args,body) = Misc.extract_lambda case in
+          let open Types in
+          let arrow_t = expr.exp_type.desc in
+          let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
+          let (fun_t:Fun.t) = Fun.make ~rec_flag: false
+                              ~args_t: (List.zip args arg_ts) 
+                              ~res_t: res_t ~body: body 
+                              (* This is default, yet doesn't 
+                               * compile if removed. Fixit. *)
+                              ~name: Fun.anonymous in
+            ret @@ S.Fun fun_t
+      | Texp_function (_,cases,_) -> 
+          failwith "Lambdas with multiple cases Unimpl."
+      | Texp_match (scrutinee,cases,[],_) ->
+          let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
+          let exptyp = type_of_tye env.ke expr.exp_type in
+          let scrutyp = type_of_tye env.ke scrutinee.exp_type in
+          (*let strf = Format.str_formatter in
+          let _ = Printtyp.type_expr strf expr.exp_type in
+          let _ = Printf.printf "Type of the match expression:%s = %s\n" 
+                    (Format.flush_str_formatter ()) (Type.to_string exptyp) in
+          let _ = Printtyp.type_expr strf scrutinee.exp_type in
+          let _ = Printf.printf "Type of scrutinee: %s = %s\n" 
+                    (Format.flush_str_formatter ()) (Type.to_string scrutyp) in*)
+          let (sv,env'',vcs2)  = let open S in match scru_sv with
+            (* List and Option are special cases where the interpreter 
+             * does some the reasoning. *)
+            | List ([],Some l) -> 
+                let x = match scrutyp with 
+                                  | List (Option t) when (Type.is_eff t) -> (*Ident.create @@ fresh_name ()*) unmanifest_list
+                                  | _ -> (* Use the same unmanifest list while evaluating expressions at the same program location *)
+                                         let v1 = expr.exp_loc.loc_start.pos_lnum in
+                                         let v2 = expr.exp_loc.loc_start.pos_cnum - expr.exp_loc.loc_start.pos_bol in
+                                         let v3 = expr.exp_loc.loc_end.pos_lnum in
+                                         let v4 = expr.exp_loc.loc_end.pos_cnum - expr.exp_loc.loc_end.pos_bol in 
+                                         if Hashtbl.mem unmanifest_list_map (v1, v2, v3, v4) then
+                                            Hashtbl.find unmanifest_list_map (v1, v2, v3, v4) 
+                                         else 
+                                            let res = Ident.create @@ fresh_name () in 
+                                            let _ = Hashtbl.add unmanifest_list_map (v1, v2, v3, v4) res in
+                                            res in
+                let xte = TE.add x exptyp env'.te in
                 (S.Var x, {env' with te=xte}, [])
-          | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
-          | Option op -> doIt_option_cases env' op cases 
-          | NewEff (Cons.T cons_t, argop) -> 
-              failwith "Texp_match NewEff Unimpl."
-          | Record fields -> 
-              failwith "Texp_match Record Unimpl."
-          (* In other cases, we let the solver do the reasoning *)
-          | _ -> doIt_sv_cases env' scru_sv scrutyp cases in
-          (sv,env'',vcs1 @ vcs2)
-    | Texp_match (_,_,ex_cases,_) -> 
-        failwith "Match expressions with exception cases Unimpl."
-    | Texp_sequence (e1,e2) -> 
-        let (svs,env',vcs) = doIt_exprs env [e1;e2] in
-          (List.last svs, env', vcs)
-    | Texp_ifthenelse (grde,e1,Some e2) -> 
-        let (true_grd, env1, vcs1) = doIt_expr env grde in
-        let false_grd = S.Not true_grd in
-        let doIt expr env = doIt_expr env expr in
-        let (v1_op, env2, vcs2) = 
-          try
-            let (v1, env2, vcs2) = doIt_under_grd env1 true_grd 
-                                     (doIt e1) in
-              (Some v1, env2, vcs2)
-          with Inconsistency ->
-            let (env2,new_vc) = mk_vc env1 false_grd in
-              (None, env2, [new_vc]) in
-        let (v2_op, env3, vcs3) = 
-          try
-            let (v2, env3, vcs3) = doIt_under_grd env2 false_grd 
-                                     (doIt e2) in
-              (Some v2, env3, vcs3)
-          with Inconsistency ->
-            let (env3,new_vc) = mk_vc env2 true_grd in
-              (None, env3, [new_vc]) in
-        let sv = match (v1_op, v2_op) with
-          | (Some v1, Some v2) -> 
-              S.ite (true_grd, v1, v2) 
-          | (Some v1, None) -> v1 
-          | (None, Some v2) -> v2
-          | (None, None) -> (* over to the parent branch*) 
-               raise Inconsistency in
-          (sv, env3, vcs1 @ vcs2 @ vcs3)
-    | _ -> failwith "Unimpl. expr"
+            | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
+            | Option op -> doIt_option_cases env' op cases 
+            | NewEff (Cons.T cons_t, argop) -> 
+                failwith "Texp_match NewEff Unimpl."
+            | Record fields -> 
+                failwith "Texp_match Record Unimpl."
+            (* In other cases, we let the solver do the reasoning *)
+            | _ -> doIt_sv_cases env' scru_sv scrutyp cases in
+            (sv,env'',vcs1 @ vcs2)
+      | Texp_match (_,_,ex_cases,_) -> 
+          failwith "Match expressions with exception cases Unimpl."
+      | Texp_sequence (e1,e2) -> 
+          let (svs,env',vcs) = doIt_exprs env [e1;e2] in
+            (List.last svs, env', vcs)
+      | Texp_ifthenelse (grde,e1,Some e2) -> 
+          let (true_grd, env1, vcs1) = doIt_expr env grde in
+          let false_grd = S.Not true_grd in
+          let doIt expr env = doIt_expr env expr in
+          let (v1_op, env2, vcs2) = 
+            try
+              let (v1, env2, vcs2) = doIt_under_grd env1 true_grd 
+                                       (doIt e1) in
+                (Some v1, env2, vcs2)
+            with Inconsistency ->
+              let (env2,new_vc) = mk_vc env1 false_grd in
+                (None, env2, [new_vc]) in
+          let (v2_op, env3, vcs3) = 
+            try
+              let (v2, env3, vcs3) = doIt_under_grd env2 false_grd 
+                                       (doIt e2) in
+                (Some v2, env3, vcs3)
+            with Inconsistency ->
+              let (env3,new_vc) = mk_vc env2 true_grd in
+                (None, env3, [new_vc]) in
+          let sv = match (v1_op, v2_op) with
+            | (Some v1, Some v2) -> 
+                 S.ite (true_grd, v1, v2)
+            | (Some v1, None) -> v1 
+            | (None, Some v2) -> v2
+            | (None, None) -> (* over to the parent branch*) 
+                 raise Inconsistency in
+            (sv, env3, vcs1 @ vcs2 @ vcs3)
+      | _ -> failwith "Unimpl. expr" in 
+      let (sv, env, vcs) = res in
+        let assumps = (List.concat @@ List.map 
+                           (function P.BoolExpr v -> [v]
+                              | _ -> []) env.pe) in
+      let simplified_sv = S.top_simplify assumps sv in
+      match simplified_sv with 
+      | Simplified x -> (x, env, vcs)
+      | _ -> failwith "Unexpected Simplified value"
 
 and doIt_sv_cases env scru_sv typ cases = 
-  let _ = Printf.printf "This: %s\n" (S.to_string scru_sv) in
   match typ with
   | Type.Option _ -> 
       (* 1. Some case *)
@@ -598,13 +633,14 @@ and doIt_sv_cases env scru_sv typ cases =
             (None, env'', [new_vc]) in
       let sv = match (some_sv_op, none_sv_op) with
         | (Some some_sv, Some none_sv) -> 
-            S.ite (some_grd, some_sv, none_sv) 
+            S.ite (some_grd, some_sv, none_sv)
         | (Some some_sv, None) -> some_sv 
         | (None, Some none_sv) -> none_sv
         | (None, None) -> (* over to the parent branch*) 
              raise Inconsistency in
-        (sv, env'', vcs1 @ vcs2)
+      (sv, env'', vcs1 @ vcs2)
   | typ when (Type.is_eff typ) -> doIt_eff_cases env scru_sv cases
+  (*| Type.List _ -> doIt_list_cases env scru_sv cases*)
   | _ -> (*doIt_list_cases env scru_sv cases*) failwith @@ "doIt_sv_cases Unimpl. for "
             ^(S.to_string scru_sv)^" : "^(Type.to_string typ)
 
@@ -733,9 +769,9 @@ let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let diff_te = env'.te -- env.te in
   let st = (diff_te, env'.pe, P.of_sv @@ S.ConstBool true) in
     begin
-      Printf.printf "------- Symbolic Trace (%s) -----\n" 
+      (*Printf.printf "------- Symbolic Trace (%s) -----\n" 
         (Ident.name name);
-      VC.print_seq st;
+      VC.print_seq st;*)
       (body_sv, env', [st])
     end
 
@@ -750,8 +786,8 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
   let diff_te = env'.te -- env.te in
   let vc = (diff_te, env'.pe, P.of_sv body_sv) in
     begin
-      Printf.printf "---- VC (%s) ----\n" (Ident.name name);
-      VC.print_seq vc;
+      (*Printf.printf "---- VC (%s) ----\n" (Ident.name name);
+      VC.print_seq vc;*)
       (body_sv, env', [vc])
     end
 
@@ -792,40 +828,46 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 3 (* k'*) in
+  let _ = k := 7 (* k'*) in
+  let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; Gc.space_overhead = 200} in
   let _ = eff_consts := 
           List.tabulate !k (fun i -> 
                               Ident.create @@ "E"^(string_of_int i)) in
   let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
   let oper_cons = extract_oper_cons schemas in
-  let tmp_name1 =  "do_new_tweet" in
-  let tmp_name2 =  "inv_fkey" in
-  let my_fun1 = try List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = tmp_name1)
-                     (writes)
-               with Not_found -> not_found @@ tmp_name1
-                    ^" function not found" in
-  let my_fun2 = try List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = tmp_name2)
-                     (invs)
-               with Not_found -> not_found @@ tmp_name2
-                    ^" function not found" in
   let (ssn2,ssn1) = (fresh_ssn (), fresh_ssn ()) in
   let ke = KE.add (Ident.create "Eff") 
                   (* An additional NOP effect for technical reasons *)
                   (Kind.Enum (!eff_consts@[L.e_nop])) ke in
   let te = TE.add ssn2 Type.ssn (TE.add ssn1 Type.ssn te) in
-  TE.print te;
+  let txn_list = List.fold_left (fun acc (Fun.T x) -> if (String.sub (Ident.name x.name) 0 2) = "do" then Ident.name x.name::acc else acc) [] writes in
+  let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
+  let tmp_name1 = List.hd txn_list in
+  let my_fun1 = try List.find (fun (Fun.T x) -> 
+                                          Ident.name x.name = tmp_name1)
+                                   (writes)
+                             with Not_found -> not_found @@ tmp_name1 in
   let env1 = {txn=Fun.name my_fun1; seqno=0; 
-              ssn=ssn1; ke=ke; te=te;
-              pe=pe; path=[]; ve=ve; 
-              is_inv = false;
-              show=(fun eff -> S.ConstBool true);
-              effs=[]; 
-              (*te=TE.add ssn1 Type.ssn te List.fold_left 
-                    (fun te eff_const -> 
-                       TE.add eff_const Type.eff te) te !eff_consts*)} in
-  let (_, env1', vcs1) = doIt_fun env1 my_fun1 in
+                ssn=ssn1; ke=ke; te=te;
+                pe=pe; path=[]; ve=ve; 
+                is_inv = false;
+                show=(fun eff -> S.ConstBool true);
+                effs=[];} in
+  let (env1', vcs1) = List.fold_left (fun (env, vcs) tmp_name ->
+                        let my_fun1 = try List.find (fun (Fun.T x) -> 
+                                                  Ident.name x.name = tmp_name)
+                                           (writes)
+                                     with Not_found -> not_found @@ tmp_name
+                                          ^" function not found" in
+                        let env' = {env with txn=Fun.name my_fun1} in
+                        let (_, env2', vcs2') = doIt_fun env' my_fun1 in
+                        (env2', vcs@vcs2')) (env1, []) txn_list in
+  let tmp_name2 = "inv_fun" in
+  let my_fun2 = try List.find (fun (Fun.T x) -> 
+                            Ident.name x.name = tmp_name2)
+                     (invs)
+               with Not_found -> not_found @@ tmp_name2
+                    ^" function not found" in
   let is_pre = ref false in
   let env2 = 
       {env1 with txn=Fun.name my_fun2; ke=env1'.ke; 
@@ -836,9 +878,12 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                                                  S.Var ssn1)),
                                     S.ConstBool true))} in
   let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
-  let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
-    match (vcs1,vcs2) with | ([st],[inv_vc]) -> (st,inv_vc)
-      | _ -> failwith "Specverify.doIt: Unexpected" in
+  let [(te2,inv_prog,inv)] = vcs2 in
+  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
+  let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
+  (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
+    match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
+      | _ -> failwith "Specverify.doIt: Unexpected" in*)
   let (effs1, effs2) = (env1'.effs, env2'.effs) in
   let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
   let gen_or_list_successor opers eff1 eff2 = 
@@ -870,7 +915,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
     begin
       is_pre := false;
       List.map P.ground @@ 
-          List.concat [wr_prog; inv_prog; comm_assertions; [mk_ssn_cstr ssn1 effs1; 
+          List.concat @@ wr_prog_list @ [inv_prog; comm_assertions; [mk_ssn_cstr ssn1 effs1; 
                                            mk_ssn_cstr ssn2 effs2]]
     end in
   let post = 
@@ -878,14 +923,16 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       is_pre := false;
       P.ground inv
     end in
-  let new_te = TE.fold_name 
-                 (fun id ty te -> 
-                    try (ignore @@ TE.find_name (Ident.name id) te; 
-                          raise Not_found)
-                         (*failwith @@ (Ident.name id)^" variable \
-                                  duplicate found. Please rename.")*)
-                    with Not_found -> TE.add id ty te) te2 te1 in
+  let new_te_list = List.map (fun te1 -> 
+                      TE.fold_name 
+                         (fun id ty te -> 
+                            try (ignore @@ TE.find_name (Ident.name id) te; 
+                                  raise Not_found)
+                                 (*failwith @@ (Ident.name id)^" variable \
+                                          duplicate found. Please rename.")*)
+                            with Not_found -> TE.add id ty te) te2 te1) te_list  in
+  let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
                                 pre=pre; prog=prog; post=post} in
-  let _ = VC.print conc_vc in
+  (*let _ = VC.print conc_vc in*)
     [(Fun.name my_fun1, conc_vc)]

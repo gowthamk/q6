@@ -143,6 +143,8 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
     let id = Ident.create @@ "mkkey_"^(Type.to_string typ) in
       TE.add id refTy te in
   let add_mkkeys te = List.fold_left add_mkkey_for_type te id_types in
+  let add_mkkey_int te = 
+    TE.add (Ident.create @@ "mkkey_int") (Type.Arrow (Type.Int, Type.id)) te in
   (* 9. Add reads, writes and aux funs to VE *)
   let add_funs ve = List.fold_left 
                       (fun ve (Fun.T {name} as fun_t) -> 
@@ -221,7 +223,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let te = List.fold_left (fun te f -> f te) TE.empty
       [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
        add_ssn; add_ssn_nop; add_txn; add_seqno; add_currtxn; add_objid; 
-       add_objtyp; add_oper; add_rels; add_hbid; add_show] in
+       add_mkkey_int;add_objtyp; add_oper; add_rels; add_hbid; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_funs; add_Inconsistency] in
