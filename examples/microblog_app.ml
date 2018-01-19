@@ -172,33 +172,44 @@ let get_user_id_by_name nm =
     end*)
 
 let find_last_ts fid ctxt = 
-  let ts_list = List.map (fun eff -> match eff with
-                  | Some x -> (match x with 
-                              | User.AddFollower {follower_id=fid1; timestamp=ts1} -> if fid=fid1 then ts1 else (0-1) 
-                              | _ -> (match x with 
-                                     | User.RemFollower {follower_id=fid2; timestamp=ts2} -> if fid2=fid then ts2 else (0-1)
-                                     | _ -> (0-1)))
-                  | _ -> (0-1)) ctxt in
-  List.fold_left (fun acc ts -> if ts > acc then ts else acc) (0-1) ts_list
-  (*List.fold_right (fun ts acc -> if ts > acc then ts else acc) ts_list (0-1)*)
+  let ts_list = List.map 
+      (fun eff -> match eff with 
+         | Some x -> (match x with 
+             | User.AddFollower {follower_id=fid1; 
+                                 timestamp=ts1} -> 
+                 if fid=fid1 then ts1 else (0-1) 
+             | User.RemFollower {follower_id=fid2; 
+                                 timestamp=ts2} -> 
+                 if fid2=fid then ts2 else (0-1)
+             | _ -> 0-1) 
+         | _ -> (0-1)) ctxt in
+  let max_ts = List.fold_left 
+      (fun acc ts -> if ts > acc then ts else acc) 
+      (0-1) ts_list in
+    max_ts
 
 let is_follower fid ctxt = 
   let ts = find_last_ts fid ctxt in
-  List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with
-                                    | User.AddFollower {follower_id=fid1; timestamp=ts1} -> fid1=fid && ts1=ts
-                                    | _ -> acc)
-                      | _ -> acc) ctxt false
+    List.fold_right 
+      (fun eff acc -> match eff with 
+         | Some x -> (match x with 
+             | User.AddFollower {follower_id=fid1; 
+                                 timestamp=ts1} -> 
+                 fid1=fid && ts1=ts 
+             | _ -> acc) 
+         | _ -> acc) ctxt false
 
 let do_new_tweet uid str = 
   let ctxt = User_table.get uid (User.GetFollowers) in
   let fids = List.map 
-               (fun eff -> match eff with 
-                  | Some x -> 
-                      (match x with 
-                         | User.AddFollower {follower_id=fid; timestamp=ts} -> if (is_follower fid ctxt) then Some fid else None
-                         | _ -> None)
-                  | _ -> None) ctxt in
+       (fun eff -> match eff with 
+          | Some x -> 
+              (match x with 
+                 | User.AddFollower {follower_id=fid; 
+                                     timestamp=ts} -> 
+                     if (is_follower fid ctxt) then Some fid else None
+                 | _ -> None)
+          | _ -> None) ctxt in
   let tweet_id = Uuid.create() in
     begin
       Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});

@@ -63,3 +63,9 @@
 /parsing/parser.conflicts
 
 /utils/config.ml
+
+Makefile
+*.z3
+*.log
+trash.txt
+examples/q6

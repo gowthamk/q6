@@ -141,7 +141,7 @@ struct
     | ITE of t * t * t
     | Fun of Fun.t (* No closures. Only functions. *)
     | Record of (Ident.t * t) list
-    | EffCons of Cons.t
+    | EffCons of Cons.t (* Effect Constructor; to store in TE *)
     | NewEff of Cons.t * t option
     | DelayedITE of bool ref * t * t (* resolved only when necesary. *)
     | Simplified of t (* t is fully simplified*)
@@ -178,7 +178,7 @@ struct
         | NewEff (Cons.T {name},Some sv) -> (Ident.name name)^(g sv)
         | DelayedITE (x,v1,v2) -> "DelayedITE ("^(string_of_bool !x)
               ^","^(to_string v1)^","^(to_string v2)^")"
-        | Simplified sv -> "Simplified ("^to_string sv^")"
+        | Simplified sv -> to_string sv
         
   let nil = List ([],None)
 
@@ -220,7 +220,9 @@ struct
     let gen _ = String.make 1 (char_of_int(gen())) in
     String.concat "" (Array.to_list (Array.init length gen));;
 
-  let eq_sv sv1 sv2 = (sv1=sv2) || ((Simplified sv1)=sv2) || (let res= (Simplified sv2=sv1) in (*let _ = if res then Printf.printf "eq_sv: %s\n" (to_string sv2) in*) res)
+  let eq_sv sv1 sv2 =    (sv1=sv2) 
+                      || ((Simplified sv1)=sv2) 
+                      || ((Simplified sv2=sv1))
 
   let rec simplify assumps gv =  
       let t1 = Sys.time() in 
