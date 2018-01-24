@@ -15,9 +15,9 @@ struct
         | [] -> []
         | l::rest -> append l (concat rest)
 
-  let rec fold_left f b l = match l with
+  let rec fold_left g b l = match l with
     | [] -> b
-    | x::xs -> fold_left f (f b x) xs
+    | x::xs -> fold_left g (g b x) xs
 
   let rec fold_right f l b = match l with
     | [] -> b

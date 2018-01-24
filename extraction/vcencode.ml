@@ -491,7 +491,7 @@ let assert_tpcc_contracts () =
   let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
     _assert_all asns
 
-let assert_contracts () = assert_ba_contracts ()
+let assert_contracts () = assert_mb_contracts ()
 (*
  * Encoding
  *)
@@ -523,7 +523,6 @@ let rec doIt_sv sv =
       | ConstBool true -> mk_true ()
       | ConstBool false -> mk_false ()
       | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
-      | Simplified sv1 -> doIt_sv sv1
       (*| Option None -> mk_true ()
       | Option Some x -> f x *)
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
