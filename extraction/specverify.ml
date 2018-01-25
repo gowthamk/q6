@@ -49,8 +49,8 @@ let s_pervasives = [("=", fun x y -> S.Eq (x,y));
                     ("<>", fun x y -> S.Not (S.Eq (x,y)));
                     (">", fun x y -> S.Gt (x,y));
                     ("<", fun x y -> S.Lt (x,y));
-                    (">=", fun x y -> S.Or[S.Gt (x,y); S.Eq(x,y)]);
-                    ("<=", fun x y -> S.Or[S.Lt (x,y); S.Eq(x,y)]);]
+                    (">=", fun x y -> S.Or [S.Gt (x,y); S.Eq(x,y)]);
+                    ("<=", fun x y -> S.Or [S.Lt (x,y); S.Eq(x,y)]);]
 
 let is_pervasive id = List.mem_assoc (Ident.name id) s_pervasives 
 
@@ -88,7 +88,6 @@ let find_none_case cases = try List.find (fun case ->
 let find_some_case cases = try List.find (fun case -> 
                             is_some_pat case.c_lhs.pat_desc) cases
                            with Not_found -> not_found "Some case not found"
-           
 
 let (--) te1 te2 = 
   TE.fold_name 
@@ -105,8 +104,13 @@ let doIt_under_grd env grd doIt =
   let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
   let xenv = {env with pe=xpe; path=xpath} in
   let (v,xenv') = doIt xenv in
-  (* Remove grdp from pe *)
-  let pe' = List.filter (fun p -> p <> grdp) xenv'.pe in
+  (* Find new predicates *)
+  let new_ps = List.filter 
+                (fun p -> p <> grdp && 
+                          not @@ List.mem p env.pe) 
+                xenv'.pe in
+  (* Add them to pe *)
+  let pe' = env.pe @ new_ps in
   (* Restore path and ve *)
   let env' = {xenv' with pe=pe'; path=env.path; ve=env.ve}  in
     (v, env')
@@ -315,13 +319,10 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
                           else (fun ve -> ve)] in
   let xenv = {env with ke=xke; ve=xve} in
   let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
-  let assumps = (List.concat @@ List.map 
-                     (function P.BoolExpr v -> [v]
-                        | _ -> []) env.pe) in
-  let simplified_sv = S.simplify assumps body_sv in
+  let (pe',body_sv') = P.simplify xenv'.pe body_sv in
   (* restore original KE and VE *)
-  let env' = {xenv' with ke=env.ke; ve=env.ve} in
-    (simplified_sv, env')
+  let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
+    (body_sv', env')
 
 and doIt_expr env (expr:Typedtree.expression) : S.t * env = 
   let open Path in
@@ -563,7 +564,7 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
   let assumps = (List.concat @@ List.map 
                      (function P.BoolExpr v -> [v]
                         | _ -> []) env.pe) in
-  let simplified_sv = S.simplify assumps sv in
+  let simplified_sv = P.simplify assumps sv in
     (simplified_sv, env)*)
 
 and doIt_sv_cases env scru_sv typ cases = 
@@ -709,17 +710,14 @@ let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'} body in
-  let assumps = (List.concat @@ List.map 
-                     (function P.BoolExpr v -> [v]
-                        | _ -> []) env.pe) in
-  let simplified_sv = S.simplify assumps body_sv in
+  let (pe',body_sv') = P.simplify env'.pe body_sv in
   let diff_te = env'.te -- env.te in
-  let st = (diff_te, env'.pe, P.of_sv @@ S.ConstBool true) in
+  let st = (diff_te, pe', P.of_sv @@ S.ConstBool true) in
     begin
       (*Printf.printf "------- Symbolic Trace (%s) -----\n" 
         (Ident.name name);
       VC.print_seq st;*)
-      (simplified_sv, env', [st])
+      (body_sv', {env' with pe=pe'}, [st])
     end
 
 let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
@@ -730,16 +728,13 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'; is_inv=true} body in
-  let assumps = (List.concat @@ List.map 
-                     (function P.BoolExpr v -> [v]
-                        | _ -> []) env.pe) in
-  let simplified_sv = S.simplify assumps body_sv in
+  let (pe',body_sv') = P.simplify env'.pe body_sv in
   let diff_te = env'.te -- env.te in
-  let vc = (diff_te, env'.pe, P.of_sv body_sv) in
+  let vc = (diff_te, pe', P.of_sv body_sv') in
     begin
       (*Printf.printf "---- VC (%s) ----\n" (Ident.name name);
       VC.print_seq vc;*)
-      (simplified_sv, env', [vc])
+      (body_sv', {env' with pe=pe'}, [vc])
     end
 
 let get_arg_condition (oper) (eff1) (eff2) (schemas) : S.t list = 
@@ -818,6 +813,11 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                         let env' = {env with txn=Fun.name my_fun1} in
                         let (_, env2', vcs2') = doIt_fun env' my_fun1 in
                           (env2', vcs@vcs2')) (env1, []) txn_list in
+  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
+  (* Printing program preds *)
+  let _ = List.iteri 
+            (fun i p -> Printf.printf "%d. %s\n" i (P.to_string p)) @@
+            List.concat wr_prog_list in
   let tmp_name2 = "inv_fun" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name2)
@@ -835,11 +835,6 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                                     S.ConstBool true))} in
   let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
   let [(te2,inv_prog,inv)] = vcs2 in
-  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
-  (* Printing program preds *)
-  let _ = List.iteri 
-            (fun i p -> Printf.printf "%d. %s\n" i (P.to_string p)) @@
-            List.concat wr_prog_list in
   let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
   (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
     match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)

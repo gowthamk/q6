@@ -2,6 +2,12 @@ open Types
 open Typedtree
 open Printf
 
+let dprintf = function 
+  | true -> Printf.printf
+  | false -> (Printf.ifprintf stdout)
+(* Debug print flags *)
+let _dsimpl = ref false;;
+
 module Type = 
 struct
   type t = Any | Int | Bool | String | Other of Ident.t
@@ -192,6 +198,13 @@ struct
    * Does a follow from assumps?
    *)
   let rec (|=) assumps a = 
+    (* 
+     * This is needed because new assumps may be added since the last
+     * simplification.
+     *)
+    let assumps = List.concat @@ List.map 
+                                   (function (And x) -> x 
+                                      | x -> [x]) assumps in
       match a with 
         | ConstBool true -> true
         | And vs -> List.for_all (fun v -> assumps |= v) vs
@@ -215,15 +228,6 @@ struct
             simplify assumps a
         | App (_fromJust, [Option (Some a)]) when (_fromJust = L.fromJust) ->
            simplify assumps a
-        (*| App (_fromJust, [a]) when (_fromJust = L.fromJust) ->
-           let a' = simplify assumps a in
-           let _ = printf "ASSUMPS:\n" in
-           let _ = List.iteri (fun i s -> printf "%d. %s\n" i @@ to_string s)
-                     assumps in
-           let _ = printf "** fromJust(%s)\n" @@ to_string a' in
-           let _ = failwith "Halted" in
-            if a' = a then gv 
-            else simplify assumps @@ App(_fromJust, [a'])*)
         | App (f,v2s) -> 
           let v2s' = List.map (simplify assumps) v2s in
           let same = List.map2 (=) v2s' v2s in
@@ -296,34 +300,6 @@ struct
     let xs' = List.map simplify_one xs in
       if xs' = xs then xs else simplify_all xs'
 
-  let simplify assumps sv = 
-    let open Printf in
-    let assumps = List.concat @@ List.map 
-                                   (function (And x) -> x 
-                                      | x -> [x]) assumps in
-    let assumps = simplify_all assumps in
-    let _ = printf "ASSUMPS:\n" in
-    let _ = List.iteri (fun i s -> printf "%d. %s\n" i @@ to_string s)
-        assumps in
-    let _ = printf "BEFORE: %s\n" @@ to_string sv in
-    let sv' = simplify assumps sv in
-    let _ = printf "AFTER: %s\n\n" @@ to_string sv' in
-    let _ = failwith "Halted" in
-      sv'
-
-  let test_simplify () = 
-    let f = Ident.create "f" in
-    let g = Ident.create "g" in
-    let h = Ident.create "h" in
-    let a = Var (Ident.create "a") in
-    let _0 = ConstInt 0 in
-    let _1 = ConstInt 1 in
-    let [fa;ga;ha] = List.map (fun fn -> App(fn,[a])) [f;g;h] in
-    let t = ITE (Eq (fa,ga), ITE(Eq(ha,ha), a, _0), _1) in
-    let t' = simplify [] t in
-    let _ = printf "t' = %s\n" @@ to_string t' in
-      ()
-
   let rec ground v = 
     let f = ground in
     let g = List.map f in 
@@ -340,10 +316,6 @@ struct
         | Record flds -> Record (List.map (fun (id,v) -> (id,f v)) flds)
         | DelayedITE (x,v1,v2) -> if !x then v1 else v2
         | _ -> v
-
-  let print_ite res = match res with 
-                      | ITE (v1,v2,v3) -> Printf.printf "simplify_assumps_ite of if %s then %s else %s\n" (to_string v1) (to_string v2) (to_string v3)
-                      | _ -> ()
 
   (*let ground v = simplify [] @@ ground v*)
   let ite (v1,v2,v3) = ITE (v1,v2,v3)
@@ -381,6 +353,51 @@ struct
 
   let _iff (t1,t2) = Iff (t1,t2)
   let forall ty f = Forall (ty,f)
+
+  let rec simplify (assumps: S.t list) (p:t) = 
+    match p with
+      | BoolExpr s -> BoolExpr (S.simplify assumps s)
+      | If (p1,p2) -> 
+          let p1' = simplify assumps p1 in
+            (match p1' with
+              | BoolExpr (S.ConstBool true) -> simplify assumps p2
+              | BoolExpr (S.ConstBool false) -> 
+                                    BoolExpr (S.ConstBool true)
+              | BoolExpr s1 -> If (p1', simplify (assumps@[s1]) p2))
+      | Iff (p1,p2) -> Iff (simplify assumps p1, 
+                            simplify assumps p2)
+
+  let simplify (pe: t list) (sv:S.t) = 
+    let (atoms,others) = List.partition 
+                          (function BoolExpr _ -> true
+                                  | _ -> false) pe in
+    let atoms' = S.simplify_all @@ List.concat @@ 
+            List.map (function BoolExpr (S.And x) -> x 
+                             | BoolExpr x -> [x]
+                             | _ -> failwith "Impossible!") atoms in
+    let others' = List.map (simplify atoms') others in
+    let _ = dprintf !_dsimpl "ASSUMPS:\n" in
+    let _ = List.iteri (fun i s -> 
+              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atoms' in
+    let _ = dprintf !_dsimpl "BEFORE: %s\n" @@ S.to_string sv in
+    let sv' = S.simplify atoms' sv in
+    let _ = dprintf !_dsimpl "AFTER: %s\n\n" @@ S.to_string sv' in
+    let pe' = (List.map (fun x -> BoolExpr x) atoms')@others' in
+      (pe',sv')
+
+  let test_simplify () = 
+    let open S in
+    let f = Ident.create "f" in
+    let g = Ident.create "g" in
+    let h = Ident.create "h" in
+    let a = Var (Ident.create "a") in
+    let _0 = ConstInt 0 in
+    let _1 = ConstInt 1 in
+    let [fa;ga;ha] = List.map (fun fn -> App(fn,[a])) [f;g;h] in
+    let t = ITE (Eq (fa,ga), ITE(Eq(ha,ha), a, _0), _1) in
+    let t' = simplify [] t in
+    let _ = printf "t' = %s\n" @@ to_string t' in
+      ()
 
   let rec ground p = match p with
     | BoolExpr v -> BoolExpr (S.ground v)
