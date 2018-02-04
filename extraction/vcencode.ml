@@ -523,7 +523,10 @@ let rec doIt_sv sv =
       | ConstBool true -> mk_true ()
       | ConstBool false -> mk_false ()
       | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
+<<<<<<< HEAD
       | Simplified sv1 -> f sv1
+=======
+>>>>>>> gowthamk
       (*| Option None -> mk_true ()
       | Option Some x -> f x *)
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
@@ -564,6 +567,8 @@ let assert_neg_const name =
 
 let discharge (txn_id, vc) = 
   let open VC in
+  let vc_name = "VC"(*fresh_vc_name ()*) in
+  let out_chan = open_out @@ vc_name^".z3" in
     begin
       declare_types (vc.kbinds, vc.tbinds);
       declare_vars vc.tbinds;
@@ -574,11 +579,10 @@ let discharge (txn_id, vc) =
       declare_pred "post" vc.post;
       assert_const "pre";
       assert_neg_const "post";
-      Printf.printf "*****  CONTEXT ******\n";
-      print_string @@ Solver.to_string !solver;
-      print_string "(check-sat)\n";
-      print_string "(get-model)\n";
-      Printf.printf "\n*********************\n";
+      output_string out_chan @@ Solver.to_string !solver;
+      output_string out_chan "(check-sat)\n";
+      output_string out_chan "(get-model)\n";
+      printf "Context printed in %s.z3\n" vc_name;
       flush_all ();
       Printf.printf "Time before execution of check_sat: %fs\n" (Sys.time());
       check_sat ()

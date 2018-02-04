@@ -123,6 +123,11 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_Eff_accessors te = List.fold_left 
                            (fun te (id,refty) -> TE.add id refty te)
                            te accessors in
+  (* eg: VE[user_id :-> user_id]; to user the same ident for many
+   * applications of user_id accessor *)
+  let add_accessor_svs ve = List.fold_left 
+                           (fun ve (id,_) ->VE.add id (SV.Var id) ve)
+                           ve accessors in
   (* 7. Qualified id type aliases to KE *)
   (* eg: User.id :-> Type.UUID *)
   (* TODO: Qualified eff type aliases to KE *)
@@ -226,7 +231,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
        add_mkkey_int;add_objtyp; add_oper; add_rels; add_hbid; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
-      [add_effcons_aliases; add_funs; add_Inconsistency] in
+      [add_effcons_aliases; add_accessor_svs; add_funs; add_Inconsistency] in
     (ke,te,ve)
 
 let doIt rdt_spec = 

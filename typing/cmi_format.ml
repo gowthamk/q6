@@ -49,7 +49,7 @@ let read_cmi filename =
     let buffer =
       really_input_string ic (String.length Config.cmi_magic_number)
     in
-    if buffer <> Config.cmi_magic_number then begin
+    (*if buffer <> Config.cmi_magic_number then begin
       close_in ic;
       let pre_len = String.length Config.cmi_magic_number - 3 in
       if String.sub buffer 0 pre_len
@@ -61,7 +61,7 @@ let read_cmi filename =
       end else begin
         raise(Error(Not_an_interface filename))
       end
-    end;
+    end;*)
     let cmi = input_cmi ic in
     close_in ic;
     cmi
