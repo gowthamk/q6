@@ -171,6 +171,11 @@ let get_user_id_by_name nm =
       User_table.append other_id (User.RemFollowing {leader_id=my_id; timestamp=ts})
     end*)
 
+let rec max_ts ts_list = 
+  match ts_list with
+  | [] -> -1
+  | ts::rest -> if List.forall ts_list (fun ts' -> ts' <= ts) then ts else max_ts rest
+
 let find_last_ts fid ctxt = 
   let ts_list = List.map (fun eff -> match eff with
                   | Some x -> (match x with 
@@ -179,16 +184,34 @@ let find_last_ts fid ctxt =
                                      | User.RemFollower {follower_id=fid2; timestamp=ts2} -> if fid2=fid then ts2 else (0-1)
                                      | _ -> (0-1)))
                   | _ -> (0-1)) ctxt in
-  List.fold_left (fun acc ts -> if ts > acc then ts else acc) (0-1) ts_list
+  (*max_ts ts_list*)
+  List.fold_left (fun acc ts -> ts+acc+acc(*if ts > acc then ts else acc*)) (0-1) ts_list
   (*List.fold_right (fun ts acc -> if ts > acc then ts else acc) ts_list (0-1)*)
 
-let is_follower fid ctxt = 
+let rec is_follower fid ctxt = 
+  match ctxt with
+  | [] -> false
+  | y::ys -> let t = is_follower fid ys in
+             match y with 
+             | Some x -> (match x with
+                          | User.AddFollower {follower_id=fid1; timestamp=ts1} -> 
+                            if fid1 = fid then
+                            List.forall ctxt (fun eff -> match eff with 
+                                                        | Some z -> (match z with
+                                                                    | User.RemFollower {follower_id=fid2; timestamp=ts2} -> if fid2=fid then ts1>=ts2 else true
+                                                                    | _ -> true)
+                                                        | _ -> true)
+                            else t 
+                          | _ -> t)
+             | _ -> t
+
+(*let is_follower fid ctxt = 
   let ts = find_last_ts fid ctxt in
   List.fold_right (fun eff acc -> match eff with 
                       | Some x -> (match x with
                                     | User.AddFollower {follower_id=fid1; timestamp=ts1} -> fid1=fid && ts1=ts
                                     | _ -> acc)
-                      | _ -> acc) ctxt false
+                      | _ -> acc) ctxt false*)
 
 let do_new_tweet uid str = 
   let ctxt = User_table.get uid (User.GetFollowers) in
