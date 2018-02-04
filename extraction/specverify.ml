@@ -87,7 +87,15 @@ let (--) te1 te2 =
 let (++) te1 te2 = TE.fold_name TE.add te2 te1
 
 let doIt_under_grd env grd doIt = 
-  let grdp = P.of_sv grd in
+  let assumps = (List.concat @@ List.map 
+                           (function P.BoolExpr v -> [v]
+                              | _ -> []) env.pe) in
+  (*let _ = Printf.printf "P.of_sv\n" in*)
+  let grdp = P.of_sv grd assumps in
+  (*let _ = match grdp with
+          | P.BoolExpr x -> Printf.printf "Guard:\n%s\nAssumps:\n" (S.to_string x)
+          | _ -> () in*)
+  (*let _ = List.map (fun s -> Printf.printf "%s\n" (S.to_string s)) assumps in*)
   let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
   let xenv = {env with pe=xpe; path=xpath} in
   let (v,xenv',vcs) = doIt xenv in
@@ -104,7 +112,7 @@ let mk_vc env grd =
   (*let _ = printf "-- Assumps are: %s --\n" 
     (String.concat ", " @@ List.map S.to_string assumps) in*)
   let conseqP = 
-    P.of_sv @@ S.top_simplify assumps grd in
+    P.of_sv (S.top_simplify assumps grd) [] in
   let new_vc = (env.te, env.pe, conseqP) in
   (* 
    * Assume that VC is valid for further analyis.
@@ -217,8 +225,8 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   (* For the new effect, phi_1 to phi_7 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
-  let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3] @ phis_4 @ 
-                                [phi_5; phi_6; phi_7; phi_8]) in
+  let tconj = P.of_sv (S.And ([phi_1; phi_2; phi_3] @ phis_4 @ 
+                                [phi_5; phi_6; phi_7; phi_8])) [] in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
@@ -227,8 +235,8 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let phi_4' = S.Eq (S.App (L.ssn, [sv_y]), 
                      S.Var L.ssn_nop) in
   (* phi_2' and phi_3' are true anywhere outside the current branch *)
-  let fcond = P.of_sv @@ S.Not (S.And env.path) in
-  let fcondp = P._if (fcond, P.of_sv @@ S.And [phi_2'; phi_3'; phi_4']) in
+  let fcond = P.of_sv (S.Not (S.And env.path)) [] in
+  let fcondp = P._if (fcond, P.of_sv (S.And [phi_2'; phi_3'; phi_4']) []) in
   (*let uncond = P.of_sv @@ S.Not (S.Eq (S.App (L.oper, [sv_y]), 
                                        S.Var (Cons.name Cons.nop))) in
   let uncondp = P._if (uncond, P.of_sv @@ S.And [phi_5; phi_6]) in*)
@@ -257,10 +265,13 @@ let doIt_get env typed_sv1 sv2 =
   let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
   let vis (id1,id2) = S.App (L.vis, [S.Var id1;
                                       S.Var id2]) in
+  let assumps = (List.concat @@ List.map 
+                         (function P.BoolExpr v -> [v]
+                            | _ -> []) env.pe) in
   let grded_eff (id1,id2) = 
       S.ite (S.And [vis (id1,id2); (env.show id1)], 
              S.Option (Some (S.Var id1)), 
-             S.Option None) in
+             S.Option None) assumps in
   (*
    * E.g: [vis(E0,!e0)? Some E0 : None; vis(E1,!e0)? Some E1 : None]
    *)
@@ -280,11 +291,11 @@ let doIt_get env typed_sv1 sv2 =
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
 
-let isFirstFold = ref true;;
 
-let (unmanifest_list_map : (int*int*int*int, Ident.t) Hashtbl.t) = Hashtbl.create 2017
+let (unmanifest_list_map : (int*int*int*int, Ident.t) Hashtbl.t) = Hashtbl.create 47
 
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
+  (*let _ = Printf.printf "Doing %s\n" (Ident.name fun_t.name) in*)
   let _ = if List.length fun_t.args_t = List.length arg_svs then ()
           else failwith "Partial application unimpl."  in
   (*
@@ -323,6 +334,8 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let (body_sv,xenv',vcs) = doIt_expr xenv fun_t.body in 
   (* restore original KE and VE *)
   let env' = {xenv' with ke=env.ke; ve=env.ve} in
+  (*let _ = if ((Ident.name fun_t.name) = "find_last_ts" || (Ident.name fun_t.name) = "is_follower") then Printf.printf "---%s\n%s\n" (Ident.name fun_t.name) (S.to_string body_sv) in*)
+  (*let _ = Printf.printf "Ended %s =\n%s\n" (Ident.name fun_t.name) (S.to_string body_sv) in*)
     (body_sv, env', vcs)
 
 and doIt_expr env (expr:Typedtree.expression) 
@@ -521,7 +534,11 @@ and doIt_expr env (expr:Typedtree.expression)
       | Texp_function (_,cases,_) -> 
           failwith "Lambdas with multiple cases Unimpl."
       | Texp_match (scrutinee,cases,[],_) ->
+          (*let _ = printf "Texp_match (scrutinee,cases,[],_)\n" in*)
+          let t1 = Sys.time() in
           let (scru_sv, env', vcs1) = doIt_expr env scrutinee in
+          (*let _ = Printf.printf "doIt_expr env scrutinee took %fs\n" (Sys.time() -. t1) in*)
+          (*let _ = Printf.printf "Scru_sv:\n%s\n" (S.to_string scru_sv) in*)
           let exptyp = type_of_tye env.ke expr.exp_type in
           let scrutyp = type_of_tye env.ke scrutinee.exp_type in
           (*let strf = Format.str_formatter in
@@ -531,23 +548,25 @@ and doIt_expr env (expr:Typedtree.expression)
           let _ = Printtyp.type_expr strf scrutinee.exp_type in
           let _ = Printf.printf "Type of scrutinee: %s = %s\n" 
                     (Format.flush_str_formatter ()) (Type.to_string scrutyp) in*)
+          let t2 = Sys.time() in
           let (sv,env'',vcs2)  = let open S in match scru_sv with
             (* List and Option are special cases where the interpreter 
              * does some the reasoning. *)
             | List ([],Some l) -> 
-                let x = match scrutyp with 
-                                  | List (Option t) when (Type.is_eff t) -> (*Ident.create @@ fresh_name ()*) unmanifest_list
-                                  | _ -> (* Use the same unmanifest list while evaluating expressions at the same program location *)
-                                         let v1 = expr.exp_loc.loc_start.pos_lnum in
-                                         let v2 = expr.exp_loc.loc_start.pos_cnum - expr.exp_loc.loc_start.pos_bol in
-                                         let v3 = expr.exp_loc.loc_end.pos_lnum in
-                                         let v4 = expr.exp_loc.loc_end.pos_cnum - expr.exp_loc.loc_end.pos_bol in 
-                                         if Hashtbl.mem unmanifest_list_map (v1, v2, v3, v4) then
-                                            Hashtbl.find unmanifest_list_map (v1, v2, v3, v4) 
-                                         else 
-                                            let res = Ident.create @@ fresh_name () in 
-                                            let _ = Hashtbl.add unmanifest_list_map (v1, v2, v3, v4) res in
-                                            res in
+                let v1 = expr.exp_loc.loc_start.pos_lnum in
+                let v2 = expr.exp_loc.loc_start.pos_cnum - expr.exp_loc.loc_start.pos_bol in
+                let v3 = expr.exp_loc.loc_end.pos_lnum in
+                let v4 = expr.exp_loc.loc_end.pos_cnum - expr.exp_loc.loc_end.pos_bol in 
+                let x = ((*match scrutyp with 
+                  | List (Option t) when (Type.is_eff t) -> let _ = Printf.printf "unmanifest list - (%d,%d,%d,%d)\n" v1 v2 v3 v4 in unmanifest_list
+                  | _ ->*) (* Use the same unmanifest list while evaluating expressions at the same program location *)
+                             if Hashtbl.mem unmanifest_list_map (v1, v2, v3, v4) then
+                                Hashtbl.find unmanifest_list_map (v1, v2, v3, v4) 
+                             else 
+                                let res = Ident.create @@ fresh_name () in 
+                                let _ = Printf.printf "Adding %s for (%d,%d,%d,%d)\n" (Ident.name res) v1 v2 v3 v4 in
+                                let _ = Hashtbl.add unmanifest_list_map (v1, v2, v3, v4) res in
+                                res) in
                 let xte = TE.add x exptyp env'.te in
                 (S.Var x, {env' with te=xte}, [])
             | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
@@ -558,6 +577,7 @@ and doIt_expr env (expr:Typedtree.expression)
                 failwith "Texp_match Record Unimpl."
             (* In other cases, we let the solver do the reasoning *)
             | _ -> doIt_sv_cases env' scru_sv scrutyp cases in
+            (*let _ = Printf.printf "let open S in match scru_sv with took %fs\n" (Sys.time() -. t2) in*)
             (sv,env'',vcs1 @ vcs2)
       | Texp_match (_,_,ex_cases,_) -> 
           failwith "Match expressions with exception cases Unimpl."
@@ -586,26 +606,34 @@ and doIt_expr env (expr:Typedtree.expression)
                 (None, env3, [new_vc]) in
           let sv = match (v1_op, v2_op) with
             | (Some v1, Some v2) -> 
-                 S.ite (true_grd, v1, v2)
+                 (*let _ = Printf.printf "S.ite\n" in*)
+                 let assumps = (List.concat @@ List.map 
+                         (function P.BoolExpr v -> [v]
+                            | _ -> []) env.pe) in
+                 S.ite (true_grd, v1, v2) assumps
             | (Some v1, None) -> v1 
             | (None, Some v2) -> v2
             | (None, None) -> (* over to the parent branch*) 
                  raise Inconsistency in
             (sv, env3, vcs1 @ vcs2 @ vcs3)
       | _ -> failwith "Unimpl. expr" in 
-      let (sv, env, vcs) = res in
+      (*let _ = printf "%s Symbolic execution of (%d, %d --> %d, %d) took %fs\n" randString expr.exp_loc.loc_start.pos_lnum (expr.exp_loc.loc_start.pos_cnum - expr.exp_loc.loc_start.pos_bol) expr.exp_loc.loc_end.pos_lnum (expr.exp_loc.loc_end.pos_cnum - expr.exp_loc.loc_end.pos_bol) (Sys.time() -. t1) in*)
+      (*let (sv, env, vcs) = res in
         let assumps = (List.concat @@ List.map 
                            (function P.BoolExpr v -> [v]
                               | _ -> []) env.pe) in
       let simplified_sv = S.top_simplify assumps sv in
       match simplified_sv with 
       | Simplified x -> (x, env, vcs)
-      | _ -> failwith "Unexpected Simplified value"
+      | _ -> failwith "Unexpected Simplified value"*)
+      res
 
 and doIt_sv_cases env scru_sv typ cases = 
+  (*let _ = printf "doIt_sv_cases\n" in*)
   match typ with
   | Type.Option _ -> 
       (* 1. Some case *)
+      let t1 = Sys.time() in
       let some_grd = S.app (L.isSome,[scru_sv]) in
       let none_grd = S.Not some_grd in
       let some_val = S.app (L.fromJust, [scru_sv]) in
@@ -621,6 +649,7 @@ and doIt_sv_cases env scru_sv typ cases =
            *)
           let (env',new_vc) = mk_vc env none_grd in
             (None, env', [new_vc]) in
+      (*let _ = printf "Some case took %fs\n" (Sys.time() -. t1) in*)
       (* 2. None case *)
       let (none_sv_op,env'',vcs2) = 
         try 
@@ -633,7 +662,10 @@ and doIt_sv_cases env scru_sv typ cases =
             (None, env'', [new_vc]) in
       let sv = match (some_sv_op, none_sv_op) with
         | (Some some_sv, Some none_sv) -> 
-            S.ite (some_grd, some_sv, none_sv)
+            let assumps = (List.concat @@ List.map 
+                         (function P.BoolExpr v -> [v]
+                            | _ -> []) env.pe) in
+            S.ite (some_grd, some_sv, none_sv) assumps
         | (Some some_sv, None) -> some_sv 
         | (None, Some none_sv) -> none_sv
         | (None, None) -> (* over to the parent branch*) 
@@ -719,12 +751,16 @@ and doIt_eff_cases env eff_sv cases =
                             ifopes, 
                           elsee) 
      | _ -> failwith "doIt_eff_cases: Unexpected" in
+   let assumps = (List.concat @@ List.map 
+                         (function P.BoolExpr v -> [v]
+                            | _ -> []) env.pe) in
    let grded_sv = List.fold_right 
-                    (fun (grd,ifee) elsee -> S.ite (grd,ifee,elsee))
+                    (fun (grd,ifee) elsee -> S.ite (grd,ifee,elsee) assumps)
                     (ifes : (S.t*S.t) list) elsee in
      (grded_sv, env', vcs)
 
 and doIt_list_cases env (conc,abs) cases = 
+  (*let _ = Printf.printf "Conc, abs\n" in*)
   let _ = if List.length cases = 2 then ()
           else failwith "List pattern match needs 2 cases" in
   let is_nil_pat = function
@@ -749,12 +785,18 @@ and doIt_list_cases env (conc,abs) cases =
   let doIt_cons x_sv xs_sv = 
     let xve = VE.add  xs_var xs_sv (VE.add x_var x_sv env.ve) in
     let xenv = {env with ve=xve} in
+    (*let _ = printf "doIt_cons x_sv xs_sv\n" in*)
     let (cons_sv,env',vcs) = doIt_expr xenv cons_expr in
+    (*let _ = printf "###%s\n" (S.to_string cons_sv) in*)
       (cons_sv, {env' with ve=env.ve}, vcs) in
     match (conc,abs) with
       | ([],None) -> doIt_expr env nil_expr
       | ([],Some l) -> failwith "doIt_list_cases: Unexpected"
-      | (x_sv::conc', _) -> doIt_cons x_sv (S.List (conc',abs)) 
+      | (x_sv::conc', _) -> (*let _ = printf "$$$%s\n" (S.to_string x_sv) in*)
+                            let res = doIt_cons x_sv (S.List (conc',abs)) in
+                            let (sv1, _, _) = res in
+                            (*let _ = printf "&&&%s\n" (S.to_string sv1) in*)
+                            res
 
 let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let (args_tys : (Ident.t * Type.t) list)= 
@@ -767,7 +809,7 @@ let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let _ = match vcs with | [] -> () 
     | _ -> failwith "Unexpected VCs" in
   let diff_te = env'.te -- env.te in
-  let st = (diff_te, env'.pe, P.of_sv @@ S.ConstBool true) in
+  let st = (diff_te, env'.pe, P.of_sv (S.ConstBool true) []) in
     begin
       (*Printf.printf "------- Symbolic Trace (%s) -----\n" 
         (Ident.name name);
@@ -784,7 +826,7 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
               env.te args_tys in
   let (body_sv,env',_) = doIt_expr {env with te=te'; is_inv=true} body in
   let diff_te = env'.te -- env.te in
-  let vc = (diff_te, env'.pe, P.of_sv body_sv) in
+  let vc = (diff_te, env'.pe, P.of_sv body_sv []) in
     begin
       (*Printf.printf "---- VC (%s) ----\n" (Ident.name name);
       VC.print_seq vc;*)
@@ -828,8 +870,8 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 7 (* k'*) in
-  let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; Gc.space_overhead = 200} in
+  let _ = k := 3 (* k'*) in
+  let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 1024000; major_heap_increment = 1024000; Gc.space_overhead = 200} in
   let _ = eff_consts := 
           List.tabulate !k (fun i -> 
                               Ident.create @@ "E"^(string_of_int i)) in
@@ -892,20 +934,20 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       let eq_cond = S.Eq (S.App (L.oper, [S.Var eff2]), op) in
       let same_op_cond = S.And (eq_cond :: cond_for_op) in
       let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
-      P.of_sv @@ (S.Or (same_op_cond::or_list)) in
+      P.of_sv (S.Or (same_op_cond::or_list)) [] in
   let rec comm_assertion eff1 eff2 opers = 
     match opers with
     | x::xs -> if (List.length xs) > 0 then 
-                  P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), gen_or_list_successor (x::xs) eff1 eff2) :: (comm_assertion eff1 eff2 xs) 
-               else [P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff2]), x))]
+                  P._if (P.of_sv (S.Eq (S.App (L.oper, [S.Var eff1]), x)) [], gen_or_list_successor (x::xs) eff1 eff2) :: (comm_assertion eff1 eff2 xs) 
+               else [P._if (P.of_sv (S.Eq (S.App (L.oper, [S.Var eff1]), x)) [], P.of_sv (S.Eq (S.App (L.oper, [S.Var eff2]), x)) [])]
     | _ -> [] in
   let comm_assertions = List.flatten @@ List.mapi (fun i eff -> if i<(!k-1) then comm_assertion eff (List.nth !eff_consts (i+1)) oper_cons else []) !eff_consts in
   let mk_ssn_cstr ssn_id effs = 
       P.forall Type.eff 
         (fun v -> 
-           P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
-                                   S.Var ssn_id), 
-                  P.of_sv @@ in_set v @@ List.rev effs)) in
+           P._if (P.of_sv (S.Eq (S.App (L.ssn, [S.Var v]), 
+                                   S.Var ssn_id)) [], 
+                  P.of_sv (in_set v @@ List.rev effs) [])) in
   let pre = 
     begin
       is_pre := true;
@@ -934,5 +976,5 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
                                 pre=pre; prog=prog; post=post} in
-  (*let _ = VC.print conc_vc in*)
+  let _ = VC.print conc_vc in
     [(Fun.name my_fun1, conc_vc)]

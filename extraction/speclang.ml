@@ -189,15 +189,50 @@ struct
 
   let some x = Option (Some x)
 
+  let removeSimplifiedTags sv = 
+    let t1 = Sys.time() in
+    let rec removeTags sv = 
+      match sv with
+      | App (f, v2s) -> App (f, List.map removeTags v2s)
+      | ITE (a, b, c) -> sv(*ITE (removeTags a, removeTags b, removeTags c)*)
+      | Option (Some a) -> sv(*Option (Some (removeTags a))*)
+      | And svs -> sv(*And (List.map removeTags svs)*)
+      | Or svs -> sv(*Or (List.map removeTags svs)*)
+      | Eq (sv1, sv2) -> sv(*Eq (removeTags sv1, removeTags sv2)*)
+      | Not sv1 -> Not (removeTags sv1)
+      | Simplified sv1 -> sv1
+      | _ -> sv in
+    let res = removeTags sv in 
+    (*let _ = Printf.printf "Removing Simplified tags took %fs\n" (Sys.time() -. t1) in*)
+    res
+
+    let traverseSV sv = 
+      let t1 = Sys.time() in
+      let rec traverse sv = 
+          match sv with
+          | App (f, v2s) ->  let _ = List.map traverse v2s in ()
+          | ITE (a, b, c) -> let _ = traverse a in let _ = traverse b in let _ = traverse c in ()
+          | Option (Some a) -> traverse a
+          | And svs -> let _ = List.map traverse svs in ()
+          | Or svs -> let _ = List.map traverse svs in ()
+          | Eq (sv1, sv2) -> let _ = traverse sv1 in let _ = traverse sv2 in ()
+          | Not sv1 -> let _ = traverse sv1 in ()
+          | Simplified sv1 -> let _ = traverse sv1 in ()
+          | _ -> () in
+      let _ = traverse sv in
+      Printf.printf "Traversing the symbolic value took %fs\n" (Sys.time() -. t1)
+
+
   (*
    * Does a follow from assumps?
    *)
   let rec (|=) assumps a = 
     let assumps = List.concat @@ List.map 
                                    (function (And x) -> x 
+                                      | Simplified (And x) -> x
                                       | x -> [x]) assumps in
     let assumps = List.map (fun x -> match x with
-                                     | Simplified y -> y
+                                     | Simplified sv -> sv
                                      | _ -> x) assumps in
       match a with 
         | _ when (List.mem (ConstBool false) assumps || 
@@ -220,7 +255,17 @@ struct
     let gen _ = String.make 1 (char_of_int(gen())) in
     String.concat "" (Array.to_list (Array.init length gen));;
 
-  let eq_sv sv1 sv2 = (sv1=sv2) || ((Simplified sv1)=sv2) || (let res= (Simplified sv2=sv1) in (*let _ = if res then Printf.printf "eq_sv: %s\n" (to_string sv2) in*) res)
+  let eq_sv sv1 sv2 = if (sv1 = sv2) then true 
+                      else 
+                        let t2 = Sys.time() in
+                        let r2 = (Simplified sv1 = sv2) in
+                        (*let _ = Printf.printf "Equality comparison took %fs\n" (Sys.time() -. t2) in*)
+                        if r2 then true
+                        else 
+                          let res = ((removeSimplifiedTags sv2) = sv1) in
+                          res 
+
+  (*(sv1=sv2) || ((Simplified sv1)=sv2) || (Simplified sv2=sv1)*)
 
   let rec simplify assumps gv =  
       let t1 = Sys.time() in 
@@ -231,7 +276,7 @@ struct
                               Option (Some b), 
                               Option None)])
           when (_isSome = L.isSome) ->
-            a 
+            simplify assumps a 
         | App (_isSome, [ITE (a, 
                               Option (Some b), 
                               Option None)])
@@ -239,32 +284,36 @@ struct
             simplify assumps a
         | App (_fromJust, [Simplified Option (Some a)])
           when (_fromJust = L.fromJust) -> 
-          a
+          simplify assumps a
         | App (_fromJust, [Option (Some a)])
           when (_fromJust = L.fromJust) ->
            simplify assumps a
         | App (f,v2s) -> 
           let v2s' = List.map (simplify assumps) v2s in
-          let same = List.map2 (=) v2s' v2s in
+          let t1 = Sys.time() in 
+          let same = List.map2 (eq_sv) v2s' v2s in
           let all_same = List.fold_left (&&) true same in
-          if all_same then gv else simplify assumps (App (f, v2s'))
-        | ITE (a,b,c) when (assumps |= a) -> 
+          let res = if all_same then App(f, v2s') else simplify assumps (App (f, v2s')) in
+          res
+        | ITE (a,b,c) when (assumps |= a) ->
             simplify assumps b
         | ITE (a,b,c) when (assumps |= (Not a)) -> 
             simplify assumps c
         | ITE (a, Simplified ITE (b,c,d), e) when (eq_sv d e) ->
-            simplify assumps (ITE (And [a;Simplified b], Simplified c, Simplified d))
+            simplify assumps (ITE (And [a;b], c, d))
         | ITE (a, ITE (b,c,d), e) when (eq_sv d e) ->
             simplify assumps (ITE (And [a;b], c, d))
         | ITE (a,b,c) -> 
             let a' = simplify assumps a in
             let b' = simplify (a::assumps) b in
             let c' = simplify ((Not a)::assumps) c in
-            if (eq_sv a' a) && (eq_sv b' b) && (eq_sv c' c) then gv
-                       else simplify assumps @@ ITE (a', b', c')
+            let t1 = Sys.time() in
+            let res = (eq_sv a' a) && (eq_sv b' b) && (eq_sv c' c) in
+            (*let _ = Printf.printf "10 took %fs\n" (Sys.time() -. t1) in*)
+            if res then ITE (a', b', c') else simplify assumps @@ ITE (a', b', c')
         | Option (Some a) -> 
             let a' = simplify assumps a in
-            if eq_sv a' a then gv else simplify assumps @@ Option (Some a')
+            if eq_sv a' a then Option (Some a') else simplify assumps @@ Option (Some a')
         | And [] -> ret "1" @@ ConstBool true
         | And [sv] -> ret "2" @@ simplify assumps sv
         | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
@@ -281,7 +330,7 @@ struct
             let svs' = List.map do_simplify svs in
             let same = List.map2 (eq_sv) svs' svs in
             let all_same = List.fold_left (&&) true same in 
-            if all_same then ret "5" gv else simplify assumps @@ And svs'
+            if all_same then ret "5" (And svs') else simplify assumps @@ And svs'
         | Or [] -> ConstBool true
         | Or [sv] -> simplify assumps sv
         | Or svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
@@ -296,30 +345,43 @@ struct
             let svs' = List.map do_simplify svs in
             let same = List.map2 (eq_sv) svs' svs in
             let all_same = List.fold_left (&&) true same in 
-            if all_same then gv else simplify assumps @@ Or svs'
+            if all_same then (Or svs') else simplify assumps @@ Or svs'
         | Eq (v1,v2) when (eq_sv v1 v2) -> ConstBool true
         | Eq (v1,v2) -> 
             let (v1',v2') = (simplify assumps v1, simplify assumps v2) in
-            if eq_sv v1' v1 && eq_sv v2' v2 then gv else simplify assumps @@ Eq (v1',v2')
+            if eq_sv v1' v1 && eq_sv v2' v2 then Eq (v1', v2') else simplify assumps @@ Eq (v1',v2')
         | Not (ConstBool true) -> ConstBool false
         | Not (ConstBool false) -> ConstBool true
         | Not v -> 
+            let t1 = Sys.time () in
             let v' = simplify assumps v in 
-            if eq_sv v' v then gv else simplify assumps @@ Not v'
-        | Simplified sv -> if (List.length assumps = 0) then
-                             sv
-                           else 
-                             simplify assumps sv
-                             (*let _ = if res <> sv then 
-                                     let _ = Printf.printf "***%s\n" (to_string sv) in
-                                     let _ = Printf.printf "Assumps: \n" in
-                                     let _ = List.map (fun sv1 -> Printf.printf "%s\n" (to_string sv1)) assumps in
-                                     ()*)
+            let res = if eq_sv v' v then Not v' else simplify assumps @@ Not v' in
+            (*let _ = Printf.printf "26 took %fs\n" (Sys.time() -. t1) in*)
+            res
+        | Simplified sv -> let checkPattern sv = match sv with
+                                                 | App (_fromJust, [ITE (_, _, _)]) -> true
+                                                 | _ -> false in
+                           let t1 = Sys.time() in
+                           let res = if (List.length assumps = 0) || (not (checkPattern sv)) then
+                                     (*let _ = Printf.printf "Here1\n" in*)
+                                     sv
+                                     else
+                                       (*let _ = Printf.printf "Here\n" in*)
+                                       match sv with
+                                                 | App (_fromJust, [ITE (_, Option (Some a), _)]) -> a
+                                                 | _ ->  simplify assumps sv in
+                            (*let _ = Printf.printf "27 took %fs\n" (Sys.time() -. t1) in*)
+                            res
         | _ -> gv in
         res
 
   let top_simplify assumps gv =
-    Simplified (simplify assumps gv)
+    (*let t = Sys.time() in*)
+    (*let _ = Printf.printf "%s\n" (to_string gv) in*)
+    let res = Simplified (simplify assumps gv) in
+    (*let _ = Printf.printf "Simplification took %fs\n" (Sys.time() -. t) in*)
+    (*let _ = traverseSV gv in*)
+    res
     (*simplify assumps prog_loc gv*)
 
   let rec ground v = 
@@ -345,7 +407,7 @@ struct
                       | _ -> ()
 
   let ground v = top_simplify [] @@ ground v
-  let ite (v1,v2,v3) = top_simplify [] @@ ITE (v1,v2,v3)
+  let ite (v1,v2,v3) assumps = top_simplify assumps @@ ITE (v1,v2,v3)
   let app ((v1:Ident.t),(v2s : t list)) = top_simplify [] @@ App (v1,v2s)
 end
 
@@ -358,7 +420,7 @@ struct
 
   module S = SymbolicVal
 
-  let of_sv sv = BoolExpr (S.top_simplify [] sv)
+  let of_sv sv assumps = BoolExpr (S.top_simplify assumps sv)
 
   let of_svs svs = match svs with
     | [] -> BoolExpr (S.ConstBool true)
