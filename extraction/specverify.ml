@@ -774,7 +774,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 1 (* k'*) in
+  let _ = k := 5 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -816,7 +816,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
   (* Printing program preds *)
   let _ = List.iteri 
-            (fun i p -> Printf.printf "%d. %s\n" i (P.to_string p)) @@
+            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in
   let tmp_name2 = "inv_fun" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
