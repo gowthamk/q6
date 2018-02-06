@@ -101,7 +101,6 @@ let (++) te1 te2 = TE.fold_name TE.add te2 te1
 
 let doIt_under_grd env grd doIt = 
   let grdp = P.of_sv_grd grd in
-  (*let _ = printf "Added to PE1:\n%s\n" (S.to_string grd) in*)
   let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
   let xenv = {env with pe=xpe; path=xpath} in
   let (v,xenv') = doIt xenv in
@@ -110,10 +109,6 @@ let doIt_under_grd env grd doIt =
                 (fun p -> p <> grdp && 
                           not @@ List.mem p env.pe) 
                 xenv'.pe in
-  let _ = List.map (function P.BoolExpr (S.And x) -> 
-                        let _ = List.map (fun x1 -> printf "Added to PE2:\n%s\n" (S.to_string x1)) x in ()
-                       | P.BoolExpr x -> printf "Added to PE3:\n%s\n" (S.to_string x)
-                       | _ -> ()) new_ps in
   (* Add them to pe *)
   let pe' = env.pe @ new_ps in
   (* Restore path and ve *)
@@ -324,7 +319,7 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
                           else (fun ve -> ve)] in
   let xenv = {env with ke=xke; ve=xve} in
   let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
-  let (pe',body_sv') = let _ = Printf.printf "spv 3\n" in P.simplify xenv'.pe body_sv in
+  let (pe',body_sv') = P.simplify xenv'.pe body_sv in
   (* restore original KE and VE *)
   let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
     (body_sv', env')
@@ -716,7 +711,7 @@ let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'} body in
-  let (pe',body_sv') = let _ = Printf.printf "spv 1\n" in P.simplify env'.pe body_sv in
+  let (pe',body_sv') = P.simplify env'.pe body_sv in
   let diff_te = env'.te -- env.te in
   let st = (diff_te, pe', P.of_sv @@ S.ConstBool true) in
     begin
@@ -734,7 +729,7 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
   let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'; is_inv=true} body in
-  let (pe',body_sv') = let _ = Printf.printf "spv 2\n" in P.simplify env'.pe body_sv in
+  let (pe',body_sv') = P.simplify env'.pe body_sv in
   let diff_te = env'.te -- env.te in
   let vc = (diff_te, pe', P.of_sv body_sv') in
     begin
@@ -780,7 +775,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 23 (* k'*) in
+  let _ = k := 5 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -822,7 +817,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
   (* Printing program preds *)
   let _ = List.iteri 
-            (fun i p -> Printf.printf "%d. %s\n" i (P.to_string p)) @@
+            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in
   let tmp_name2 = "inv_fun" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
