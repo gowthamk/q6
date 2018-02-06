@@ -293,88 +293,99 @@ struct
    * size(gv') ≤ size(gv). 
    *)
 
-  let rec simplify assumps gv =  
-      let t1 = Sys.time() in 
+  let (*rec*) simplify assumps gv =  
+    let rec simplify_rec assumps gv = 
       let ret str v = v in
       let res = match gv with
         (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
         | App (_isSome, [ITE (a, 
                               Option (Some b), 
                               Option None)]) when (_isSome = L.isSome) -> 
-            simplify assumps a
+            simplify_rec assumps a
         | App (_fromJust, [Option (Some a)]) when (_fromJust = L.fromJust) ->
-           simplify assumps a
+           simplify_rec assumps a
         | App (f,v2s) -> 
-          let v2s' = List.map (simplify assumps) v2s in
+          let v2s' = List.map (simplify_rec assumps) v2s in
           let same = List.map2 (=) v2s' v2s in
           let all_same = List.fold_left (&&) true same in
-          if all_same then gv else simplify assumps (App (f, v2s'))
-        | ITE (a,b,c) when (assumps |= a) -> 
-            simplify assumps b
+          let res = if all_same then gv else simplify_rec assumps (App (f, v2s')) in
+          res
+        | ITE (a,b,c) when (assumps |= a) ->
+            simplify_rec assumps b
         | ITE (a,b,c) when (assumps |= (Not a)) -> 
-            simplify assumps c
+            simplify_rec assumps c
         | ITE (a, ITE (b,c,d), e) when (d = e) ->
-            simplify assumps (ITE (And [a;b], c, d))
+            simplify_rec assumps (ITE (And [a;b], c, d))
         | ITE (a,b,c) -> 
-            let a' = simplify assumps a in
-            let b' = simplify (a'::assumps) b in
-            let c' = simplify ((Not a')::assumps) c in
+            let a' = simplify_rec assumps a in
+            let b' = simplify_rec (a'::assumps) b in
+            let c' = simplify_rec ((Not a')::assumps) c in
             if (a' = a) && (b' = b) && (c' = c) then gv
-                       else simplify assumps @@ ITE (a', b', c')
+                       else simplify_rec assumps @@ ITE (a', b', c')
         | Option (Some a) -> 
-            let a' = simplify assumps a in
-            if a' = a then gv else simplify assumps @@ Option (Some a')
+            let a' = simplify_rec assumps a in
+            if a' = a then gv else simplify_rec assumps @@ Option (Some a')
         | And [] -> ConstBool true
-        | And [sv] -> simplify assumps sv
+        | And [sv] -> simplify_rec assumps sv
         | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
-            simplify assumps @@ 
+            simplify_rec assumps @@ 
               And (List.filter (fun sv -> not (assumps |= sv)) svs)
         | And svs when (List.exists (function (And _) -> true
                                        | _ -> false) svs) ->
-                simplify assumps @@ 
+                simplify_rec assumps @@ 
                   And (List.concat @@ List.map (function (And svs') -> svs'
                                                   | sv -> [sv]) svs)
         | And svs -> 
             let do_simplify sv = 
-              simplify ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
+              simplify_rec ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
             let svs' = List.map do_simplify svs in
             let same = List.map2 (=) svs' svs in
             let all_same = List.fold_left (&&) true same in 
-            if all_same then ret "5" gv else simplify assumps @@ And svs'
+            if all_same then ret "5" gv else simplify_rec assumps @@ And svs'
         | Or [] -> ConstBool true
-        | Or [sv] -> simplify assumps sv
+        | Or [sv] -> simplify_rec assumps sv
         | Or svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
             ConstBool true
         | Or svs when (List.exists (function (Or _) -> true
                                        | _ -> false) svs) ->
-            simplify assumps @@ 
+            simplify_rec assumps @@ 
               Or (List.concat @@ List.map (function (Or svs') -> svs'
                                             | sv -> [sv]) svs)
         | Or svs -> 
-            let do_simplify sv = simplify assumps sv in
+            let do_simplify sv = simplify_rec assumps sv in
             let svs' = List.map do_simplify svs in
             let same = List.map2 (=) svs' svs in
             let all_same = List.fold_left (&&) true same in 
-            if all_same then gv else simplify assumps @@ Or svs'
+            if all_same then gv else simplify_rec assumps @@ Or svs'
         | Eq (v1,v2) when (v1 = v2) -> ConstBool true
         | Eq (v1,v2) -> 
-            let (v1',v2') = (simplify assumps v1, simplify assumps v2) in
+            let (v1',v2') = (simplify_rec assumps v1, simplify_rec assumps v2) in
               if v1' = v1 && v2' = v2 
               then gv
-              else simplify assumps @@ Eq (v1',v2')
+              else simplify_rec assumps @@ Eq (v1',v2')
+        | Gt (v1, v2) -> 
+            let (v1',v2') = (simplify_rec assumps v1, simplify_rec assumps v2) in
+              if v1' = v1 && v2' = v2 
+              then gv
+              else simplify_rec assumps @@ Gt (v1',v2')
         | Not (ConstBool true) -> ConstBool false
         | Not (ConstBool false) -> ConstBool true
         | Not v -> 
-            let v' = simplify assumps v in 
-            if v' = v then gv else simplify assumps @@ Not v'
-        | _ -> gv in
-        res
+            let v' = simplify_rec assumps v in 
+            if v' = v then gv else simplify_rec assumps @@ Not v'
+        | _ -> match to_string gv with
+               | "true" -> ConstBool true
+               | "false" -> ConstBool false
+               | _ -> gv in
+        res in
+    let res1 = simplify_rec assumps gv in
+    res1
 
   let rec simplify_all xs = 
     let simplify_one x = simplify (List.filter (fun x' -> x' <> x)
                                          xs) x in
     let xs' = List.map simplify_one xs in
-      if xs' = xs then xs else simplify_all xs'
+    if xs' = xs then xs else simplify_all xs'
 
   let rec ground v = 
     let f = ground in
@@ -401,6 +412,7 @@ end
 module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
+    | BoolExprGrd of SymbolicVal.t
     | If of t * t 
     | Iff of t * t 
     | Forall of Type.t * (Ident.t -> t)
@@ -409,11 +421,14 @@ struct
 
   let of_sv sv = BoolExpr sv 
 
+  let of_sv_grd sv = BoolExprGrd sv
+
   let of_svs svs = match svs with
     | [] -> BoolExpr (S.ConstBool true)
     | _ -> BoolExpr (S.And svs)
 
   let rec to_string = function BoolExpr sv -> S.to_string sv
+    | BoolExprGrd sv -> S.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | Iff (v1,v2) -> (to_string v1)^" <=> "^(to_string v2)
     | Forall (ty,f) -> 
@@ -451,6 +466,7 @@ struct
   let rec simplify (assumps: S.t list) (p:t) = 
     match p with
       | BoolExpr s -> BoolExpr (S.simplify assumps s)
+      | BoolExprGrd s -> BoolExprGrd (S.simplify assumps s)
       | If (p1,p2) -> 
           let p1' = simplify assumps p1 in
             (match p1' with
@@ -462,9 +478,18 @@ struct
                             simplify assumps p2)
 
   let simplify (pe: t list) (sv:S.t) = 
+    let peWithoutGrds = List.filter (function BoolExprGrd _ -> false
+                                     | _ -> true) pe in
     let (atoms,others) = List.partition 
                           (function BoolExpr _ -> true
-                                  | _ -> false) pe in
+                                  | _ -> false) peWithoutGrds in
+    let atomsForPrinting = List.concat @@ 
+            List.map (function BoolExpr (S.And x) -> x 
+                             | BoolExpr x -> [x]
+                             | _ -> failwith "Impossible!") atoms in
+    let _ = dprintf !_dsimpl "ASSUMPS (BEFORE SIMPLIFICATION):\n" in
+    let _ = List.iteri (fun i s -> 
+              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atomsForPrinting in
     let atoms' = S.simplify_all @@ List.concat @@ 
             List.map (function BoolExpr (S.And x) -> x 
                              | BoolExpr x -> [x]
@@ -477,7 +502,7 @@ struct
     let sv' = S.simplify atoms' sv in
     let _ = dprintf !_dsimpl "AFTER: %s\n\n" @@ S.to_string sv' in
     let pe' = (List.map (fun x -> BoolExpr x) atoms')@others' in
-      (pe',sv')
+    (pe',sv')
 
   let test_simplify () = 
     let open S in

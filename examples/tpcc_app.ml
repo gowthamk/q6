@@ -20,9 +20,9 @@ struct
     | [] -> raise (Failure "empty list")
     | x::xs -> if n=0 then x else nth xs (n-1)
 
-  let rec fold_left f b l = match l with
+  (*let rec fold_left f b l = match l with
     | [] -> b
-    | x::xs -> fold_left f (f b x) xs
+    | x::xs -> fold_left f (f b x) xs*)
 
   let rec fold_right f l b = match l with
     | [] -> b
@@ -194,31 +194,51 @@ type item_req = {ol_i_id: Item.id; ol_supply_w_id: Warehouse.id; ol_qty: int}
 
 let get_latest_nextoid did dwid = 
   let d_effs = District_table.get did (District.Get) in
-  let last_ts = List.fold_right (fun eff acc -> match eff with 
+  let rec find_nextoid deffs =
+    match deffs with
+    | [] -> -1
+    | eff::effs -> let t = find_nextoid effs in
+                   match eff with 
                     | Some y -> (match y with 
-                                  | District.SetNextOID {d_id=did2; d_w_id=dwid2; next_o_id=nextoid2; ts=ts2} -> if dwid2=dwid && ts2>acc then ts2 else acc                                                       
-                                  | _ -> acc)
-                    | _ -> acc) d_effs 0 in
-  List.fold_right (fun eff acc -> match eff with 
-                    | Some y -> (match y with 
-                                  | District.SetNextOID {d_id=did2; d_w_id=dwid2; next_o_id=nextoid2; ts=ts2} -> if dwid2=dwid && ts2=last_ts then nextoid2 else acc                                                       
-                                  | _ -> acc)
-                    | _ -> acc) d_effs 0
+                                 | District.SetNextOID {d_id=did1; d_w_id=dwid1; next_o_id=nextoid1; ts=ts1} -> 
+                                    if did1 = did && dwid1 = dwid then
+                                      if List.forall d_effs (fun eff1 -> match eff1 with
+                                                               | Some z -> (match z with 
+                                                                           | District.SetNextOID {d_id=did2; d_w_id=dwid2; next_o_id=nextoid2; ts=ts2} -> 
+                                                                              if did2 = did && dwid2 = dwid then ts1>=ts2 else true
+                                                                           | _ -> true)
+                                                               | _ -> true)
+                                      then nextoid1 else t
+                                    else t                                                       
+                                 | _ -> t)
+                    | _ -> t in
+  find_nextoid d_effs
 
 let get_dummy_hid x = Uuid.create()
 
 let get_qty ireq_ol_i_id ireq_ol_supply_w_id =
-  let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in 
-  let latest_stk_ts = List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                              | Stock.SetQuantity {s_i_id= iid2; s_w_id= wid2; s_qty= qty2; ts=ts2} -> if wid2=ireq_ol_supply_w_id && ts2>acc then ts2 else acc
-                              | _ -> acc)
-                  | _ -> acc) stk_effs (0-1) in
-  List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                              | Stock.SetQuantity {s_i_id= iid2; s_w_id= wid2; s_qty= qty2; ts=ts2} -> if wid2=ireq_ol_supply_w_id && ts2=latest_stk_ts then qty2 else acc
-                              | _ -> acc)
-                  | _ -> acc) stk_effs 0
+  let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in
+  let rec find_qty stkeffs w_id =
+    match stkeffs with
+    | [] -> -1
+    | eff::effs -> let t = find_qty effs w_id in
+                   match eff with 
+                   | Some x -> (match x with 
+                                | Stock.SetQuantity {s_i_id= iid1; s_w_id= wid1; s_qty= qty1; ts=ts1} -> 
+                                    if wid1=w_id then
+                                      if List.forall stk_effs (fun eff1 -> 
+                                        match eff1 with 
+                                        | Some y -> 
+                                          (match y with 
+                                           | Stock.SetQuantity {s_i_id= iid2; s_w_id= wid2; s_qty= qty2; ts=ts2} -> 
+                                              if wid2=w_id then ts1>=ts2 else true
+                                           | _ -> true)
+                                        | _ -> true)
+                                      then qty1 else t
+                                    else t
+                                | _ -> t)
+                   | _ -> t in
+  find_qty stk_effs ireq_ol_supply_w_id
 
 let get_price ireq_ol_i_id =
   let itemEffs = Item_table.get ireq_ol_i_id (Item.Get) in 
@@ -226,39 +246,59 @@ let get_price ireq_ol_i_id =
                     | Some x -> (match x with
                                 | Item.Add {i_id=id; i_name=name; i_price=price} -> price
                                 | _ -> acc)
-                    | _ -> acc) itemEffs 0
+                    | _ -> acc) itemEffs (0-1)
 
 let get_ytd ireq_ol_i_id ireq_ol_supply_w_id =
   let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in
-  let latest_stkytd_ts = List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                               | Stock.SetYTDPayment {s_i_id= iid2; s_w_id= wid2; c_ytd_payment= ytd2;ts=ts2} -> if wid2=ireq_ol_supply_w_id && ts2>acc then ts2 else acc
-                               | _ -> acc)
-                   | _ -> acc) stk_effs (0-1) in
-  List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                               | Stock.SetYTDPayment {s_i_id= iid2; s_w_id= wid2; c_ytd_payment= ytd2;ts=ts2} -> if wid2=ireq_ol_supply_w_id && ts2=latest_stkytd_ts then ytd2 else acc
-                               | _ -> acc)
-                   | _ -> acc) stk_effs 0
+  let rec find_ytd stkeffs wid = 
+    match stkeffs with
+    | [] -> -1
+    | eff::effs -> let t = find_ytd effs wid in
+                   match eff with 
+                   | Some x -> (match x with 
+                               | Stock.SetYTDPayment {s_i_id= iid1; s_w_id= wid1; c_ytd_payment= ytd1;ts=ts1} -> 
+                                  if wid1=wid then
+                                    if List.forall stk_effs (fun eff1 -> match eff1 with
+                                        | Some y -> (match y with 
+                                          | Stock.SetYTDPayment {s_i_id= iid2; s_w_id= wid2; c_ytd_payment= ytd2;ts=ts2} -> 
+                                            if wid2=wid then ts1>=ts2 else true
+                                          | _ -> true)
+                                        | _ -> true)
+                                    then ytd1 else t
+                                  else t
+                               | _ -> t)
+                   | _ -> t in
+  find_ytd stk_effs ireq_ol_supply_w_id
+
 
 let get_latest_stkcnt ireq_ol_i_id ireq_ol_supply_w_id =
-  let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in 
-  let latest_stkcnt_ts = List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                               | Stock.SetOrderCnt {s_i_id= iid2; s_w_id= wid2; s_order_cnt= cnt2; ts= ts2} -> if wid2=ireq_ol_supply_w_id && ts2>acc then ts2 else acc
-                               | _ -> acc)
-                    | _ -> acc) stk_effs (0-1) in
-  List.fold_right (fun eff acc -> match eff with 
-                    | Some x -> (match x with 
-                               | Stock.SetOrderCnt {s_i_id= iid2; s_w_id= wid2; s_order_cnt= cnt2; ts= ts2} -> if wid2=ireq_ol_supply_w_id && ts2=latest_stkcnt_ts then cnt2 else acc
-                               | _ -> acc)
-                    | _ -> acc) stk_effs 0
+  let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in
+  let rec find_stkcnt stkeffs wid = 
+    match stkeffs with
+    | [] -> -1
+    | eff::effs -> let t = find_stkcnt effs wid in
+                   match eff with 
+                   | Some x -> (match x with 
+                             | Stock.SetOrderCnt {s_i_id= iid1; s_w_id= wid1; s_order_cnt= cnt1; ts= ts1} -> 
+                                if wid1=wid then
+                                  if List.forall stk_effs (fun eff1 -> 
+                                    match eff1 with 
+                                    | Some y -> 
+                                      (match y with 
+                                       | Stock.SetOrderCnt {s_i_id= iid2; s_w_id= wid2; s_order_cnt= cnt2; ts= ts2} -> 
+                                          if wid2=wid then ts1>=ts2 else true
+                                       | _ -> true)
+                                    | _ -> true)
+                                  then cnt1 else t
+                                else t
+                             | _ -> t)
+                   | _ -> t in
+  find_stkcnt stk_effs ireq_ol_supply_w_id
 
 (*TODO: Only functions with upto two arguments are supported*)
 let do_new_order_txn gen_olqty did wid cid dwid gen_oliid gen_olsupplywid = 
   (* TODO: kind of ireqs not found *)
   let ireqs = [1;2;3;4;5] in
-  let d_effs = District_table.get did (District.Get) in 
   let latest_nextoid = get_latest_nextoid did dwid in
   let nextoid = latest_nextoid + 1 in
   let ts = 0 (*int_of_float (Unix.time ())*) in
@@ -266,7 +306,7 @@ let do_new_order_txn gen_olqty did wid cid dwid gen_oliid gen_olsupplywid =
       District_table.append did (District.SetNextOID {d_id=did; d_w_id=wid; next_o_id=nextoid; ts=ts});
       (*Is this approach correct??*)
       let dummy_oid = -1 in 
-      Order_table.append dummy_oid(*latest_nextoid*) (Order.Add {o_id=latest_nextoid; o_w_id=wid; o_d_id=did; 
+      Order_table.append dummy_oid (Order.Add {o_id=latest_nextoid; o_w_id=wid; o_d_id=did; 
              o_c_id=cid; o_ol_cnt=(List.length ireqs)});
       List.iter 
         (fun ireq -> 
@@ -299,77 +339,142 @@ let do_new_order_txn gen_olqty did wid cid dwid gen_oliid gen_olsupplywid =
 let get_maxoid did dwid =
   let dummy_oid = -1 in
   let order_effs = Order_table.get dummy_oid (Order.Get) in
-  List.fold_right (fun eff acc -> match eff with 
-                    | Some y -> (match y with 
-                        | Order.Add {o_id=oid1; o_w_id=wid1; o_d_id=did1; o_c_id=cid1; o_ol_cnt=cnt1} -> 
-                            if (did = did1 && dwid = wid1 && oid1 > acc) then oid1 else acc
-                        | _ -> acc)
-                    | _ -> acc) order_effs 0
+  let rec find_maxoid ordereffs did dwid = 
+    match ordereffs with
+    | [] -> -1
+    | eff::effs -> let t = find_maxoid effs did dwid in
+                   match eff with 
+                  | Some y -> (match y with 
+                      | Order.Add {o_id=oid1; o_w_id=wid1; o_d_id=did1; o_c_id=cid1; o_ol_cnt=cnt1} -> 
+                          if did = did1 && dwid = wid1 then
+                            if List.forall order_effs (fun eff1 -> 
+                              match eff1 with 
+                              | Some z -> 
+                                (match z with 
+                                | Order.Add {o_id=oid2; o_w_id=wid2; o_d_id=did2; o_c_id=cid2; o_ol_cnt=cnt2} -> 
+                                  if did2 = did && wid2 = dwid then oid1>=oid2 else true
+                                | _ -> true)
+                              | _ -> true)
+                            then oid1 else t
+                          else t
+                      | _ -> t)
+                  | _ -> t in
+  find_maxoid order_effs did dwid
 
   let get_warehouse_ytd dwid =
     let whs_effs = Warehouse_table.get dwid (Warehouse.GetYTD) in
-    let latest_whs_ts = List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | Warehouse.SetYTD {w_id=dwid1; ytd=ytd1; ts=ts1} -> if dwid=dwid1 && ts1>acc then ts1 else acc
-                                 | _ -> acc)
-                      | _ -> acc) whs_effs (0-1) in
-    List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | Warehouse.SetYTD {w_id=dwid1; ytd=ytd1; ts=ts1} -> if ts1=latest_whs_ts then ytd1 else acc
-                                 | _ -> acc)
-                     | _ -> acc) whs_effs 0
+    let rec find_warehouse_ytd whseffs =
+      match whseffs with
+      | [] -> -1
+      | eff::effs -> let t = find_warehouse_ytd effs in
+                     match eff with 
+                    | Some x -> (match x with 
+                               | Warehouse.SetYTD {w_id=dwid1; ytd=ytd1; ts=ts1} -> 
+                                  if dwid=dwid1 then
+                                    if List.forall whs_effs (fun eff1 ->
+                                      match eff1 with 
+                                      | Some y -> (match y with 
+                                         | Warehouse.SetYTD {w_id=dwid2; ytd=ytd2; ts=ts2} -> 
+                                            if dwid=dwid2 then ts1>=ts2 else true
+                                         | _ -> true)
+                                      | _ -> true)
+                                    then ytd1 else t
+                                  else t
+                               | _ -> t)
+                    | _ -> t in
+    find_warehouse_ytd whs_effs
 
   let get_district_ytd did dwid =
     let d_effs = District_table.get did (District.GetYTD) in
-    let latest_d_ts = List.fold_right (fun eff acc -> match eff with 
+    let rec find_district_ytd deffs = 
+      match deffs with
+      | [] -> -1
+      | eff::effs -> let t = find_district_ytd effs in
+                     match eff with 
                       | Some x -> (match x with 
-                                 | District.SetYTD {d_id=id; d_w_id=wid; ytd=ytd1; ts=ts1} -> if wid=dwid && ts1>acc then ts1 else acc
-                                 | _ -> acc)
-                      | _ -> acc) d_effs (0-1) in
-    List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | District.SetYTD {d_id=id; d_w_id=wid; ytd=ytd1; ts=ts1} -> if wid=dwid && ts1=latest_d_ts then ytd1 else acc
-                                 | _ -> acc)
-                     | _ -> acc) d_effs 0
+                                 | District.SetYTD {d_id=id; d_w_id=wid; ytd=ytd1; ts=ts1} -> 
+                                    if wid=dwid then
+                                      if List.forall d_effs (fun eff1 ->
+                                        match eff1 with 
+                                        | Some y -> (match y with 
+                                                   | District.SetYTD {d_id=id2; d_w_id=wid2; ytd=ytd2; ts=ts2} -> 
+                                                      if wid2=dwid then ts1>=ts2 else true
+                                                   | _ -> true)
+                                        | _ -> true)
+                                      then ytd1 else t
+                                    else t
+                                 | _ -> t)
+                      | _ -> t in
+    find_district_ytd d_effs
 
   let get_customer_bal cid cwid =
     let c_effs = Customer_table.get cid (Customer.GetBal) in
-    let latest_c_ts = List.fold_right (fun eff acc -> match eff with 
+    let rec find_customer_bal ceffs = 
+      match ceffs with
+      | [] -> -1
+      | eff::effs ->  let t = find_customer_bal effs in
+                      match eff with 
                       | Some x -> (match x with 
-                                 | Customer.SetBal {c_w_id=wid; ts=ts1} -> if (wid=cwid && ts1>acc) then ts1 else acc
-                                 | _ -> acc)
-                      | _ -> acc) c_effs (0-1) in
-    List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | Customer.SetBal {c_w_id=wid; ts=ts1;c_bal=bal} -> if (wid=cwid && ts1=latest_c_ts) then bal else acc
-                                 | _ -> acc)
-                     | _ -> acc) c_effs 0
+                                 | Customer.SetBal {c_w_id=wid; ts=ts1;c_bal=bal1} -> 
+                                    if wid=cwid then
+                                      if List.forall c_effs (fun eff1 -> 
+                                        match eff1 with 
+                                        | Some y -> (match y with 
+                                                   | Customer.SetBal {c_w_id=wid1; ts=ts2;c_bal=bal} -> 
+                                                      if wid1=cwid then ts1>=ts2 else true
+                                                   | _ -> true)
+                                        | _ -> true)
+                                      then bal1 else t
+                                    else t
+                                 | _ -> t)
+                      | _ -> t in
+    find_customer_bal c_effs
 
   let get_customer_ytd cid cwid = 
     let c_effs = Customer_table.get cid (Customer.GetYTDPayment) in
-    let latest_c_ts = List.fold_right (fun eff acc -> match eff with 
+    let rec find_customer_ytd ceffs = 
+      match ceffs with
+      | [] -> -1
+      | eff::effs -> let t = find_customer_ytd effs in
+                     match eff with 
                       | Some x -> (match x with 
-                                 | Customer.SetYTDPayment {c_w_id=wid; ts=ts1} -> if (wid=cwid && ts1>acc) then ts1 else acc
-                                 | _ -> acc)
-                      | _ -> acc) c_effs (0-1) in
-    List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | Customer.SetYTDPayment {c_w_id=wid; c_ytd_payment=ytd;ts=ts1} -> if (wid=cwid && ts1=latest_c_ts) then ytd else acc
-                                 | _ -> acc)
-                     | _ -> acc) c_effs 0
+                                 | Customer.SetYTDPayment {c_w_id=wid; ts=ts1; c_ytd_payment=ytd1} -> 
+                                    if wid=cwid then
+                                      if List.forall c_effs (fun eff1 -> 
+                                        match eff1 with 
+                                        | Some y -> (match y with 
+                                          | Customer.SetYTDPayment {c_w_id=wid1; c_ytd_payment=ytd1;ts=ts2} -> 
+                                              if wid1=cwid then ts1>=ts2 else true
+                                          | _ -> true)
+                                        | _ -> true)
+                                      then ytd1 else t
+                                    else t
+                                 | _ -> t)
+                      | _ -> t in
+    find_customer_ytd c_effs
 
   let get_customer_pycnt cid cwid = 
     let c_effs = Customer_table.get cid (Customer.GetPaymentCnt) in
-    let latest_c_ts = List.fold_right (fun eff acc -> match eff with 
+    let rec find_customer_pycnt ceffs = 
+      match ceffs with
+      | [] -> -1
+      | eff::effs -> let t = find_customer_pycnt effs in
+                     match eff with 
                       | Some x -> (match x with 
-                                 | Customer.SetPaymentCnt {c_w_id=wid; ts=ts1} -> if (wid=cwid && ts1>acc) then ts1 else acc
-                                 | _ -> acc)
-                      | _ -> acc) c_effs (0-1) in
-    List.fold_right (fun eff acc -> match eff with 
-                      | Some x -> (match x with 
-                                 | Customer.SetPaymentCnt {c_w_id=wid; c_payment_cnt=cnt;ts=ts1} -> if (wid=cwid && ts1=latest_c_ts) then cnt else acc
-                                 | _ -> acc)
-                     | _ -> acc) c_effs 0
+                                 | Customer.SetPaymentCnt {c_w_id=wid; ts=ts1; c_payment_cnt=cnt} -> 
+                                    if wid=cwid then 
+                                      if List.forall c_effs (fun eff1 -> 
+                                        match eff1 with 
+                                        | Some y -> (match y with 
+                                           | Customer.SetPaymentCnt {c_w_id=wid1; c_payment_cnt=cnt1;ts=ts2} -> 
+                                                if wid1=cwid then ts1>=ts2 else true
+                                           | _ -> true)
+                                        | _ -> true)
+                                      then cnt else t
+                                    else t
+                                 | _ -> t)
+                      | _ -> t in
+    find_customer_pycnt c_effs
   
   let do_payment_txn h_amt did dwid cdid cwid cid =
     let ts1 = 0 in
@@ -382,14 +487,14 @@ let get_maxoid did dwid =
       District_table.append did (District.SetYTD {d_id=did; d_w_id=dwid; ytd=d_ytd+h_amt; ts=ts1});
       let c_bal = get_customer_bal cid cwid in
       Customer_table.append cid (Customer.SetBal{c_id=cid; c_w_id=cwid; c_d_id=cdid; c_bal=c_bal-h_amt; ts=ts1});
-      let c_ytd = get_customer_ytd cid cwid in
+      (*let c_ytd = get_customer_ytd cid cwid in*)
       Customer_table.append cid (Customer.SetYTDPayment{c_id=cid; c_w_id=cwid; c_d_id=cdid; c_ytd_payment=h_amt; ts=ts1});
       let c_pycnt = get_customer_pycnt cid cwid in
       Customer_table.append cid (Customer.SetPaymentCnt{c_id=cid; c_w_id=cwid; c_d_id=cdid; c_payment_cnt=c_pycnt+1; ts=ts1});
       History_table.append dummy_hid (History.Append {h_w_id = dwid; h_d_id = did; h_c_id = cid; h_c_w_id = cwid; h_c_d_id = cdid; h_amount = h_amt})
     end
 
- let inv_fun oid did wid cid =
+ let inv_fun (*oid*) did wid (*cid*) =
   (* W_YTD = sum(D_YTD) *)
   (*( let ctxt = IdByTable_table.get (Uuid.create()) IdByTable.Get in
     let district_ids = List.map (fun eff -> match eff with
@@ -407,13 +512,13 @@ let get_maxoid did dwid =
   (* D_NEXT_O_ID - 1 = max(O_ID) *)
   (let latest_nextoid = get_latest_nextoid did wid in
   let max_oid_order = get_maxoid did wid in
-  latest_nextoid = (max_oid_order+1)) &&
+  latest_nextoid = (max_oid_order+1)) (*&&
   
   let dummy_hid = Uuid.create() in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
 
   (*D_YTD = sum(H_AMOUNT) *)
-  (*(let v1 = get_district_ytd did wid in
+  (let v1 = get_district_ytd did wid in
    let amts_list = List.map (fun eff -> match eff with
                                  | Some x -> (match x with
                                               | History.Append {h_w_id = hdwid; h_d_id = hdid; h_amount = h_amt} -> if hdwid=wid && hdid=did then h_amt else 0
@@ -429,7 +534,7 @@ let get_maxoid did dwid =
                                               | History.Append {h_w_id = hdwid; h_d_id = hdid; h_amount = h_amt} -> if hdwid=wid then acc+h_amt else acc
                                               | _ -> acc)
                                  | _ -> acc) history_ctxt 0) in
-   v1 = v2) &&*)
+   v1 = v2) &&
 
   let orderline_ctxt = Orderline_table.get oid (Orderline.Get) in
   let dummy_oid = -1 in
@@ -471,7 +576,7 @@ let get_maxoid did dwid =
   (let v1 = get_customer_ytd cid wid in
    let v2 = cust_bal in
    let v3 = orderline_amt in 
-    v3 = (v1+v2))
+    v3 = (v1+v2))*)
 
 (*
 (*

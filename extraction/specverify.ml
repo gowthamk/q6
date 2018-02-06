@@ -100,7 +100,7 @@ let (--) te1 te2 =
 let (++) te1 te2 = TE.fold_name TE.add te2 te1
 
 let doIt_under_grd env grd doIt = 
-  let grdp = P.of_sv grd in
+  let grdp = P.of_sv_grd grd in
   let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
   let xenv = {env with pe=xpe; path=xpath} in
   let (v,xenv') = doIt xenv in
@@ -220,7 +220,8 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   (* For the new effect, phi_1 to phi_7 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
-  let tconj = P.of_sv @@ S.And ([phi_1; phi_2; phi_3] @ phis_4 @ 
+  let tconj = P.of_sv @@ S.And 
+  ([phi_1; phi_2; phi_3] @ phis_4 @ 
                                 [phi_5; phi_6; phi_7; phi_8]) in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
@@ -274,9 +275,8 @@ let doIt_get env typed_sv1 sv2 =
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
 
-let isFirstFold = ref true;;
 
-let (unmanifest_list_map : (int*int*int*int, Ident.t) Hashtbl.t) = Hashtbl.create 2017
+let (unmanifest_list_map : (int*int*int*int, Ident.t) Hashtbl.t) = Hashtbl.create 47
 
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let _ = if List.length fun_t.args_t = List.length arg_svs then ()
@@ -514,24 +514,21 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
           (* List and Option are special cases where the interpreter 
            * does some of the reasoning. *)
           | List ([],Some l) -> 
-              let x = match scrutyp with 
-                | List (Option t) when (Type.is_eff t) -> 
-                    (*Ident.create @@ fresh_name ()*) unmanifest_list
-                | _ -> (* Use the same unmanifest list while 
-                    evaluating expressions at the same program location *)
-                    let v1 = expr.exp_loc.loc_start.pos_lnum in
-                    let v2 = expr.exp_loc.loc_start.pos_cnum - 
-                              expr.exp_loc.loc_start.pos_bol in
-                    let v3 = expr.exp_loc.loc_end.pos_lnum in
-                    let v4 = expr.exp_loc.loc_end.pos_cnum - 
-                              expr.exp_loc.loc_end.pos_bol in 
-                    if Hashtbl.mem unmanifest_list_map (v1, v2, v3, v4) then
+              let v1 = expr.exp_loc.loc_start.pos_lnum in
+              let v2 = expr.exp_loc.loc_start.pos_cnum - 
+                        expr.exp_loc.loc_start.pos_bol in
+              let v3 = expr.exp_loc.loc_end.pos_lnum in
+              let v4 = expr.exp_loc.loc_end.pos_cnum - 
+                        expr.exp_loc.loc_end.pos_bol in
+              let x = (* Use the same unmanifest list while 
+                    evaluating expressions at the same program location *) 
+                    (if Hashtbl.mem unmanifest_list_map (v1, v2, v3, v4) then
                        Hashtbl.find unmanifest_list_map (v1, v2, v3, v4) 
                     else 
                        let res = Ident.create @@ fresh_name () in 
                        let _ = Hashtbl.add unmanifest_list_map 
                                   (v1, v2, v3, v4) res in
-                        res in
+                        res) in
               let xte = TE.add x exptyp env'.te in
                 (S.Var x, {env' with te=xte})
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
@@ -567,7 +564,7 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
   let simplified_sv = P.simplify assumps sv in
     (simplified_sv, env)*)
 
-and doIt_sv_cases env scru_sv typ cases = 
+and doIt_sv_cases env scru_sv typ cases =
   match typ with
   | Type.Option _ -> 
       (* 1. Some case *)
@@ -665,12 +662,16 @@ and doIt_eff_cases env eff_sv cases =
                             ifopes, 
                           elsee) 
      | _ -> failwith "doIt_eff_cases: Unexpected" in
+   (*let assumps = (List.concat @@ List.map 
+                         (function P.BoolExpr v -> [v]
+                            | _ -> []) env.pe) in*)
    let grded_sv = List.fold_right 
                     (fun (grd,ifee) elsee -> S.ite (grd,ifee,elsee))
                     (ifes : (S.t*S.t) list) elsee in
      (grded_sv, env')
 
 and doIt_list_cases env (conc,abs) cases = 
+  (*let _ = Printf.printf "Conc, abs\n" in*)
   let _ = if List.length cases = 2 then ()
           else failwith "List pattern match needs 2 cases" in
   let is_nil_pat = function
@@ -700,7 +701,7 @@ and doIt_list_cases env (conc,abs) cases =
     match (conc,abs) with
       | ([],None) -> doIt_expr env nil_expr
       | ([],Some l) -> failwith "doIt_list_cases: Unexpected"
-      | (x_sv::conc', _) -> doIt_cons x_sv (S.List (conc',abs)) 
+      | (x_sv::conc', _) -> doIt_cons x_sv (S.List (conc',abs))
 
 let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
   let (args_tys : (Ident.t * Type.t) list)= 
@@ -847,7 +848,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       let eq_cond = S.Eq (S.App (L.oper, [S.Var eff2]), op) in
       let same_op_cond = S.And (eq_cond :: cond_for_op) in
       let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
-      P.of_sv @@ (S.Or (same_op_cond::or_list)) in
+      P.of_sv (S.Or (same_op_cond::or_list)) in
   let rec comm_assertion eff1 eff2 opers = 
     match opers with
     | x::xs -> if (List.length xs) > 0 
@@ -898,5 +899,5 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
                                 pre=pre; prog=prog; post=post} in
-  (*let _ = VC.print conc_vc in*)
+  let _ = VC.print conc_vc in
     [(Fun.name my_fun1, conc_vc)]
