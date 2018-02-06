@@ -527,7 +527,6 @@ let rec doIt_sv sv =
 
 let rec doIt_pred p = match p with
   | P.BoolExpr v -> doIt_sv v
-  | P.BoolExprGrd v -> doIt_sv v
   | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
   | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
   | P.Forall (ty,f) -> expr_of_quantifier @@

@@ -190,21 +190,29 @@ let rec max_ts ts_list =
          | _ -> (0-1)) ctxt in
   max_ts ts_list*)
 
-let rec is_follower fid ctxt = 
+
+let rec is_follower fid ctxt =
   match ctxt with
   | [] -> false
-  | y::ys -> let t = is_follower fid ys in
-             match y with 
-             | Some x -> (match x with
-                          | User.AddFollower {follower_id=fid1; timestamp=ts1} -> 
-                            if fid1 = fid then
-                            List.forall ctxt (fun eff -> match eff with 
-                                                        | Some z -> (match z with
-                                                                    | User.RemFollower {follower_id=fid2; timestamp=ts2} -> if fid2=fid then ts1>=ts2 else true
-                                                                    | _ -> true)
-                                                        | _ -> true)
-                            else t 
-                          | _ -> t)
+  | y::ys -> 
+      let t = is_follower fid ys in 
+      match y with 
+        | Some x -> 
+            (match x with 
+              | User.AddFollower {follower_id=fid1; 
+                                  timestamp=ts1} -> 
+                  if fid1 = fid then 
+                    List.forall ctxt 
+                      (fun eff -> match eff with 
+                         | Some z -> 
+                             (match z with 
+                               | User.RemFollower {follower_id=fid2; 
+                                                   timestamp=ts2} -> 
+                                   if fid2=fid then ts1>=ts2 else true 
+                               | _ -> true) 
+                         | _ -> true) 
+                  else t 
+              | _ -> t)
              | _ -> t
 
 (*let is_follower fid ctxt = 
@@ -218,7 +226,7 @@ let rec is_follower fid ctxt =
              | _ -> acc) 
          | _ -> acc) ctxt false*)
 
-let do_new_tweet uid str = 
+let do_new_tweet (uid:Uuid.t) (str:string) = 
   let ctxt = User_table.get uid (User.GetFollowers) in
   let fids = List.map 
        (fun eff -> match eff with 
@@ -238,7 +246,7 @@ let do_new_tweet uid str =
            | Some fid -> Timeline_table.append fid 
                       (Timeline.NewTweet {tweet_id=tweet_id})
            | None -> ()) fids;
-    end 
+    end
 
 let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in

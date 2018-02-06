@@ -19,8 +19,10 @@ type env = {txn: Ident.t;
             ke:KE.t; 
             is_inv: bool;
             te:TE.t; 
-            pe: Predicate.t list; (* All predicates *)
-            path: S.t list; (* branch predicates *)
+            pe: Predicate.t list; (* constraints that are true on all 
+                                     paths*)
+            path: S.t list; (* constraints that are true on the
+                               current path *)
             effs: Ident.t list; (* Effects generated *)
             ve:VE.t}
 
@@ -100,19 +102,12 @@ let (--) te1 te2 =
 let (++) te1 te2 = TE.fold_name TE.add te2 te1
 
 let doIt_under_grd env grd doIt = 
-  let grdp = P.of_sv_grd grd in
-  let (xpe,xpath) = (env.pe @ [grdp], env.path @ [grd]) in
-  let xenv = {env with pe=xpe; path=xpath} in
+  let grdp = P.of_sv grd in
+  let xpath =  env.path @ [grd] in
+  let xenv = {env with path=xpath} in
   let (v,xenv') = doIt xenv in
-  (* Find new predicates *)
-  let new_ps = List.filter 
-                (fun p -> p <> grdp && 
-                          not @@ List.mem p env.pe) 
-                xenv'.pe in
-  (* Add them to pe *)
-  let pe' = env.pe @ new_ps in
   (* Restore path and ve *)
-  let env' = {xenv' with pe=pe'; path=env.path; ve=env.ve}  in
+  let env' = {xenv' with path=env.path; ve=env.ve}  in
     (v, env')
 
 let rec type_of_tye ke (tye : type_expr) = 
@@ -217,12 +212,12 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let is_currtxn = not env.is_inv in
   let phi_8 = S.Eq (S.App (L.currtxn, [sv_y]), 
                      S.ConstBool is_currtxn) in
-  (* For the new effect, phi_1 to phi_7 are true only under 
+  (* For the new effect, phi_1 to phi_8 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ S.And 
-  ([phi_1; phi_2; phi_3] @ phis_4 @ 
-                                [phi_5; phi_6; phi_7; phi_8]) in
+                ([phi_1; phi_2; phi_3] @ phis_4 @ 
+                     [phi_5; phi_6; phi_7; phi_8]) in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
@@ -233,9 +228,6 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   (* phi_2' and phi_3' are true anywhere outside the current branch *)
   let fcond = P.of_sv @@ S.Not (S.And env.path) in
   let fcondp = P._if (fcond, P.of_sv @@ S.And [phi_2'; phi_3'; phi_4']) in
-  (*let uncond = P.of_sv @@ S.Not (S.Eq (S.App (L.oper, [sv_y]), 
-                                       S.Var (Cons.name Cons.nop))) in
-  let uncondp = P._if (uncond, P.of_sv @@ S.And [phi_5; phi_6]) in*)
   let ps = [tcondp; fcondp(*; uncondp*)] in
   (* let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in*)
     (y,ps)
@@ -430,11 +422,6 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
           (effs_sv, env'')
     (* f e *) (* (\x.e) e *)
     | Texp_apply (e1, largs) -> 
-        (*let strf = Format.str_formatter in
-        let _ = Format.fprintf strf "The type of fn being applied:\n" in
-        let _ = Printf.printf "Line number: %d\n" e1.exp_loc.loc_start.pos_lnum in
-        let _  = Printtyp.type_expr strf e1.exp_type in
-        let _ = Printf.printf "%s\n" @@ Format.flush_str_formatter () in*)
         let (sv1,env') = doIt_expr env e1 in
         let e2s = map_snd_opts largs in
         let (sv2s,env'') = doIt_exprs env' e2s in
@@ -775,7 +762,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 5 (* k'*) in
+  let _ = k := 2 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -899,5 +886,4 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
   let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
                                 pre=pre; prog=prog; post=post} in
-  let _ = VC.print conc_vc in
     [(Fun.name my_fun1, conc_vc)]
