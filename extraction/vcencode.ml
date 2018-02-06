@@ -523,16 +523,11 @@ let rec doIt_sv sv =
       | ConstBool true -> mk_true ()
       | ConstBool false -> mk_false ()
       | ITE (v1,v2,v3) -> mk_ite (f v1) (f v2) (f v3)
-<<<<<<< HEAD
-      | Simplified sv1 -> f sv1
-=======
->>>>>>> gowthamk
-      (*| Option None -> mk_true ()
-      | Option Some x -> f x *)
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
 
 let rec doIt_pred p = match p with
-  | P.BoolExpr v -> (*let _ = Printf.printf "%s\n" (S.to_string v) in*) doIt_sv v
+  | P.BoolExpr v -> doIt_sv v
+  | P.BoolExprGrd v -> doIt_sv v
   | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
   | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
   | P.Forall (ty,f) -> expr_of_quantifier @@

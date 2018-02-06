@@ -176,7 +176,7 @@ let rec max_ts ts_list =
   | [] -> -1
   | ts::rest -> if List.forall ts_list (fun ts' -> ts' <= ts) then ts else max_ts rest
 
-let find_last_ts fid ctxt = 
+(*let find_last_ts fid ctxt = 
   let ts_list = List.map 
       (fun eff -> match eff with 
          | Some x -> (match x with 
@@ -188,10 +188,7 @@ let find_last_ts fid ctxt =
                  if fid2=fid then ts2 else (0-1)
              | _ -> 0-1) 
          | _ -> (0-1)) ctxt in
-  let max_ts = List.fold_left 
-      (fun acc ts -> if ts > acc then ts else acc) 
-      (0-1) ts_list in
-    max_ts
+  max_ts ts_list*)
 
 let rec is_follower fid ctxt = 
   match ctxt with

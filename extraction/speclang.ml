@@ -6,7 +6,7 @@ let dprintf = function
   | true -> Printf.printf
   | false -> (Printf.ifprintf stdout)
 (* Debug print flags *)
-let _dsimpl = ref false;;
+let _dsimpl = ref true;;
 
 module Type = 
 struct
@@ -314,13 +314,19 @@ struct
                | "false" -> ConstBool false
                | _ -> gv in
         res in
-    simplify_rec assumps gv
+    let res1 = simplify_rec assumps gv in
+    (*let _ = if res1 <> gv then
+            let _ = Printf.printf "Simplified\n%s\nTo\n%s\nWith assumps\n" 
+            (to_string gv) (to_string res1) in
+            let _ = List.map (fun sv -> Printf.printf "%s\n" (to_string sv)) assumps in
+            () in*)
+    res1
 
   let rec simplify_all xs = 
     let simplify_one x = simplify (List.filter (fun x' -> x' <> x)
                                          xs) x in
     let xs' = List.map simplify_one xs in
-      if xs' = xs then xs else simplify_all xs'
+    if xs' = xs then xs else simplify_all xs'
 
   let rec ground v = 
     let f = ground in
@@ -347,6 +353,7 @@ end
 module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
+    | BoolExprGrd of SymbolicVal.t
     | If of t * t 
     | Iff of t * t 
     | Forall of Type.t * (Ident.t -> t)
@@ -355,11 +362,14 @@ struct
 
   let of_sv sv = BoolExpr sv 
 
+  let of_sv_grd sv = BoolExprGrd sv
+
   let of_svs svs = match svs with
     | [] -> BoolExpr (S.ConstBool true)
     | _ -> BoolExpr (S.And svs)
 
   let rec to_string = function BoolExpr sv -> S.to_string sv
+    | BoolExprGrd sv -> S.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | Iff (v1,v2) -> (to_string v1)^" <=> "^(to_string v2)
     | Forall (ty,f) -> 
@@ -379,6 +389,7 @@ struct
   let rec simplify (assumps: S.t list) (p:t) = 
     match p with
       | BoolExpr s -> BoolExpr (S.simplify assumps s)
+      | BoolExprGrd s -> BoolExprGrd (S.simplify assumps s)
       | If (p1,p2) -> 
           let p1' = simplify assumps p1 in
             (match p1' with
@@ -390,9 +401,19 @@ struct
                             simplify assumps p2)
 
   let simplify (pe: t list) (sv:S.t) = 
+    let _ = Printf.printf "4\n" in
+    let peWithoutGrds = List.filter (function BoolExprGrd _ -> false
+                                     | _ -> true) pe in
     let (atoms,others) = List.partition 
                           (function BoolExpr _ -> true
-                                  | _ -> false) pe in
+                                  | _ -> false) peWithoutGrds in
+    let atomsForPrinting = List.concat @@ 
+            List.map (function BoolExpr (S.And x) -> x 
+                             | BoolExpr x -> [x]
+                             | _ -> failwith "Impossible!") atoms in
+    let _ = dprintf !_dsimpl "ASSUMPS (BEFORE SIMPLIFICATION):\n" in
+    let _ = List.iteri (fun i s -> 
+              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atomsForPrinting in
     let atoms' = S.simplify_all @@ List.concat @@ 
             List.map (function BoolExpr (S.And x) -> x 
                              | BoolExpr x -> [x]
@@ -405,7 +426,7 @@ struct
     let sv' = S.simplify atoms' sv in
     let _ = dprintf !_dsimpl "AFTER: %s\n\n" @@ S.to_string sv' in
     let pe' = (List.map (fun x -> BoolExpr x) atoms')@others' in
-      (pe',sv')
+    (pe',sv')
 
   let test_simplify () = 
     let open S in
