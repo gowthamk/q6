@@ -53,48 +53,6 @@ struct
   let name (T {name}) = name
 end
 
-module Fun = 
-struct
-  type t = T of {name: Ident.t; 
-                 rec_flag: bool;
-                 args_t: (Ident.t * type_desc) list; 
-                 res_t: type_desc;
-                 body: expression}
-
-  let name (T {name}) = name
-
-  let anonymous = Ident.create "<anon>"
-
-  let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
-    T {name=name; rec_flag=rec_flag; args_t=args_t; 
-       res_t=res_t; body=body}
-end
-
-module Kind = 
-struct
- type t = Uninterpreted 
-        | Variant of Cons.t list (* Cons.t includes a recognizer *)
-        | Enum of Ident.t list
-        | Extendible of Ident.t list ref
-        | Alias of Type.t
-
-  let to_string = function Uninterpreted -> "Uninterpreted type"
-    | Variant cons_list -> 
-        let cons_names = List.map 
-                           (fun (Cons.T {name}) -> Ident.name name)
-                           cons_list in
-          "Variant ["^(String.concat "," cons_names)^"]"
-    | Enum ids -> 
-        let id_names = List.map
-                         (fun id -> Ident.name id) ids in
-          "Enum ["^(String.concat "," id_names)^"]"
-    | Extendible ids -> 
-        let id_names = List.map
-                         (fun id -> Ident.name id) !ids in
-          "Extendible ["^(String.concat "," id_names)^"]"
-    | Alias typ -> "Alias of "^(Type.to_string typ)
-end
-
 module L = 
 struct
   let objid = Ident.create "objid"
@@ -127,8 +85,51 @@ struct
   let txn_nop = Ident.create "txn_nop"
 end
 
-module SymbolicVal = 
-struct
+(*module KE = Light_env.Make(struct include Kind end)
+module VE = Light_env.Make(struct include SymbolicVal end)*)
+
+module Fun = struct
+  type t = T of {name: Ident.t; 
+                 rec_flag: bool;
+                 args_t: (Ident.t * type_desc) list; 
+                 res_t: type_desc;
+                 body: expression
+                 }
+
+  let name (T {name}) = name
+
+  let anonymous = Ident.create "<anon>"
+
+  let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
+    T {name=name; rec_flag=rec_flag; args_t=args_t; 
+       res_t=res_t; body=body}
+end
+
+module Kind = struct
+ type t = Uninterpreted 
+        | Variant of Cons.t list (* Cons.t includes a recognizer *)
+        | Enum of Ident.t list
+        | Extendible of Ident.t list ref
+        | Alias of Type.t
+
+  let to_string = function Uninterpreted -> "Uninterpreted type"
+    | Variant cons_list -> 
+        let cons_names = List.map 
+                           (fun (Cons.T {name}) -> Ident.name name)
+                           cons_list in
+          "Variant ["^(String.concat "," cons_names)^"]"
+    | Enum ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) ids in
+          "Enum ["^(String.concat "," id_names)^"]"
+    | Extendible ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) !ids in
+          "Extendible ["^(String.concat "," id_names)^"]"
+    | Alias typ -> "Alias of "^(Type.to_string typ)
+end
+
+module SymbolicVal  = struct
   type t = Bot
     | Var of Ident.t
     | App of Ident.t * t list
@@ -157,7 +158,7 @@ struct
     let g x = "("^(f x)^")" in
       match x with
         | Var id -> Ident.name id
-        | App (id,svs) -> (*let _ = Printf.printf "here1: %s\n" (Ident.name id) in*) (Ident.name id)^"("
+        | App (id,svs) -> (Ident.name id)^"("
             ^(String.concat "," @@ List.map f svs)^")"
         | Eq (sv1,sv2) -> (f sv1)^" = "^(f sv2)
         | Gt (sv1,sv2) -> (f sv1)^" > "^(f sv2)
@@ -368,6 +369,11 @@ struct
               if v1' = v1 && v2' = v2 
               then gv
               else simplify_rec assumps @@ Gt (v1',v2')
+        | Lt (v1, v2) -> 
+            let (v1',v2') = (simplify_rec assumps v1, simplify_rec assumps v2) in
+              if v1' = v1 && v2' = v2 
+              then gv
+              else simplify_rec assumps @@ Lt (v1',v2')
         | Not (ConstBool true) -> ConstBool false
         | Not (ConstBool false) -> ConstBool true
         | Not v -> 
@@ -529,16 +535,31 @@ end
 module Misc =
 struct
 
-  let rec uncurry_arrow = function 
-  | (Tarrow (_,typ_expr1,typ_expr2,_)) ->
-      let (ty1,ty2) = (typ_expr1.desc, typ_expr2.desc) in 
-        begin
-          match ty2 with 
-              | Tarrow _ -> (fun (x,y) -> (ty1::x,y)) (uncurry_arrow ty2)
-              | _ -> ([ty1],ty2)
-        end
-  | Tlink typ_expr -> uncurry_arrow @@ typ_expr.desc
-  | _ -> failwith "uncurry_arrow called on non-arrow type"
+  let rec rem_tlink t = 
+    match t with
+    | Tlink typ_expr -> rem_tlink typ_expr.desc
+    | Tarrow (a,typ_expr1,typ_expr2,b) -> 
+        let ty1 = typ_expr1.desc in
+        let ty2 = typ_expr2.desc in
+        Tarrow(a, {typ_expr1 with desc=rem_tlink ty1}, 
+               {typ_expr2 with desc=rem_tlink ty2},
+               b)
+    | _ -> t
+
+  let uncurry_arrow t = 
+    let strf = Format.std_formatter  in
+    let rec uncurry_arrow_rec = function
+      | (Tarrow (_,typ_expr1,typ_expr2,_)) ->
+          let (ty1,ty2) = (typ_expr1.desc, typ_expr2.desc) in
+          let ty2' = rem_tlink ty2 in
+          begin
+            match ty2' with 
+                | Tarrow _ -> (fun (x,y) -> (ty1::x,y)) (uncurry_arrow_rec ty2')
+                | _ -> ([ty1], ty2')
+          end
+      | Tlink typ_expr -> uncurry_arrow_rec @@ typ_expr.desc
+      | _ -> failwith "uncurry_arrow called on non-arrow type" in
+    uncurry_arrow_rec t
 
   let to_tye tyd = let open Types in
     {desc=tyd; level=0; id=0}
@@ -581,7 +602,7 @@ struct
         Printf.printf "%s\n" @@ Format.flush_str_formatter ();
         failwith "Unification failure"
       end in
-    let assrt b = if b then () else failwith "not unifiable" in
+    let assrt b = if b then () else fail ()(*failwith "not unifiable"*) in
       match (tyd1,tyd2) with
         (* 
          * One of tye1 and tye2 is a concrete type, but we don't
