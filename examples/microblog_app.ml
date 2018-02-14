@@ -37,13 +37,6 @@ struct
     | [] -> true
     | x::xs -> (f x)&&(forall xs f)
 
-  let rev_list l =
-  let rec rev_acc acc = function
-    | [] -> acc
-    | hd::tl -> rev_acc (hd::acc) tl
-  in 
-  rev_acc [] l
-
   let rec exists l f = match l with
     | [] -> false
     | x::xs -> (f x)||(exists xs f)
@@ -147,7 +140,7 @@ end
     User_table.append uid (User.Add {username=name;pwd=pwd})
   end*) 
 
-let get_user_id_by_name nm = 
+(*let get_user_id_by_name nm = 
   let ctxt = (* ea *) UserName_table.get nm (UserName.GetId) in
   let ids = List.map (fun eff -> match eff with 
                         | Some (UserName.Add {user_id=id}) -> Some id 
@@ -158,7 +151,7 @@ let get_user_id_by_name nm =
     begin
       if num_ids > 1 then raise Inconsistency else ();
       List.first_some ids
-    end
+    end*)
 
 (*let do_block_user me other  = 
   let Some my_id = get_user_id_by_name me in
@@ -171,26 +164,30 @@ let get_user_id_by_name nm =
       User_table.append other_id (User.RemFollowing {leader_id=my_id; timestamp=ts})
     end*)
 
+let le ts ts' = ts' <= ts
+
 let rec max_ts ts_list = 
   match ts_list with
   | [] -> -1
-  | ts::rest -> if List.forall ts_list (fun ts' -> ts' <= ts) then ts else max_ts rest
+  | ts::rest -> if List.forall ts_list (le ts) then ts else max_ts rest
 
-(*let find_last_ts fid ctxt = 
-  let ts_list = List.map 
-      (fun eff -> match eff with 
-         | Some x -> (match x with 
-             | User.AddFollower {follower_id=fid1; 
-                                 timestamp=ts1} -> 
-                 if fid=fid1 then ts1 else (0-1) 
-             | User.RemFollower {follower_id=fid2; 
-                                 timestamp=ts2} -> 
-                 if fid2=fid then ts2 else (0-1)
-             | _ -> 0-1) 
-         | _ -> (0-1)) ctxt in
-  max_ts ts_list*)
+let get_timestamp fid' eff = 
+   match eff with 
+   | Some x -> (match x with 
+       | User.AddFollower {follower_id=fid1; 
+                           timestamp=ts1} -> 
+           if fid'=fid1 then ts1 else (0-1) 
+       | User.RemFollower {follower_id=fid2; 
+                           timestamp=ts2} -> 
+           if fid2=fid' then ts2 else (0-1)
+       | _ -> 0-1) 
+   | _ -> (0-1)
 
-let rec is_follower fid ctxt = 
+let find_last_ts fid ctxt = 
+  let ts_list = List.map (get_timestamp fid) ctxt in
+  max_ts ts_list
+
+(*let rec is_follower fid ctxt = 
   match ctxt with
   | [] -> false
   | y::ys -> let t = is_follower fid ys in
@@ -205,65 +202,75 @@ let rec is_follower fid ctxt =
                                                         | _ -> true)
                             else t 
                           | _ -> t)
-             | _ -> t
+             | _ -> t*)
 
-(*let is_follower fid ctxt = 
+let is_max_add_follower fid ts eff acc =
+  match eff with 
+  | Some x -> (match x with 
+      | User.AddFollower {follower_id=fid1; 
+                          timestamp=ts1} -> 
+          fid1=fid && ts1=ts
+      | _ -> acc) 
+  | _ -> acc
+
+let is_follower fid ctxt = 
   let ts = find_last_ts fid ctxt in
-    List.fold_right 
-      (fun eff acc -> match eff with 
-         | Some x -> (match x with 
-             | User.AddFollower {follower_id=fid1; 
-                                 timestamp=ts1} -> 
-                 fid1=fid && ts1=ts 
-             | _ -> acc) 
-         | _ -> acc) ctxt false*)
+  List.fold_right (is_max_add_follower fid ts) ctxt false
+
+let get_fid ctxt' eff = 
+  match eff with 
+  | Some x -> 
+      (match x with 
+         | User.AddFollower {follower_id=fid; 
+                             timestamp=ts} -> 
+             if (is_follower fid ctxt') then Some fid else None
+         | _ -> None)
+  | _ -> None
+
+let new_tweet tweet_id' fidop = 
+  match fidop with 
+  | Some fid -> Timeline_table.append fid 
+             (Timeline.NewTweet {tweet_id=tweet_id'})
+  | None -> ()
 
 let do_new_tweet uid str = 
   let ctxt = User_table.get uid (User.GetFollowers) in
-  let fids = List.map 
-       (fun eff -> match eff with 
-          | Some x -> 
-              (match x with 
-                 | User.AddFollower {follower_id=fid; 
-                                     timestamp=ts} -> 
-                     if (is_follower fid ctxt) then Some fid else None
-                 | _ -> None)
-          | _ -> None) ctxt in
+  let fids = List.map (get_fid ctxt) ctxt in
   let tweet_id = Uuid.create() in
     begin
       Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});
       Userline_table.append uid (Userline.NewTweet {tweet_id=tweet_id});
-      List.iter 
-        (fun fidop -> match fidop with 
-           | Some fid -> Timeline_table.append fid 
-                      (Timeline.NewTweet {tweet_id=tweet_id})
-           | None -> ()) fids;
+      List.iter (new_tweet tweet_id) fids;
     end 
 
-let get_tweet tid = 
+(*let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in
   let tweets = List.map (fun eff -> match eff with
                            | Some (Tweet.New {content}) -> Some content
                            | _ -> None) ctxt in
   let res = List.first_some tweets in
-    res
+    res*)
+
+let exists_tweet e' =
+   match e' with 
+   | Some y -> (match y with 
+                  | (Tweet.New _) -> true 
+                  | _ -> false)
+   | _ -> false
+
+let exists_in_tweet_table e = 
+  match e with
+  | Some x -> 
+      (match x with 
+         | Userline.NewTweet {tweet_id=tid} -> 
+             List.exists (Tweet_table.get tid Tweet.Get) exists_tweet
+         | _ -> false)
+  | _ -> true
 
 let inv_fun uid' = 
-  List.forall (Userline_table.get uid' (Userline.Get))
-  (fun e -> match e with
-           | Some x -> 
-               (match x with 
-                  | Userline.NewTweet {tweet_id=tid} -> 
-                      List.exists (Tweet_table.get tid Tweet.Get) 
-                        (fun e' -> match e' with 
-                           | Some y -> (match y with 
-                                          | (Tweet.New _) -> true 
-                                          | _ -> false)
-                           | _ -> false)
-                  | _ -> false)
-           | _ -> true)
+  List.forall (Userline_table.get uid' (Userline.Get)) exists_in_tweet_table
 
-let get_userline uid = 
+(*let get_userline uid = 
   let ctxt = Userline_table.get uid (Userline.Get) in
   let tweets = List.map 
                  (fun x -> match x with 
@@ -273,10 +280,10 @@ let get_userline uid =
                                 Some (get_tweet tid)
                            | _ -> None)
                     | _ -> None) ctxt in
-  (*let _ = List.iter (fun top -> match top with 
+  let _ = List.iter (fun top -> match top with 
                            | Some x ->  (match x with
                                            | Some _ -> ()
                                            | None -> raise Inconsistency)
                            | None -> ()) 
-            tweets in*)
-    tweets
+            tweets in
+    tweets*)
