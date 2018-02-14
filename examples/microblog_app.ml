@@ -233,7 +233,7 @@ let new_tweet tweet_id' fidop =
              (Timeline.NewTweet {tweet_id=tweet_id'})
   | None -> ()
 
-let do_new_tweet uid str = 
+let do_new_tweet (uid:Uuid.t) (str:string) = 
   let ctxt = User_table.get uid (User.GetFollowers) in
   let fids = List.map (get_fid ctxt) ctxt in
   let tweet_id = Uuid.create() in
@@ -241,7 +241,7 @@ let do_new_tweet uid str =
       Tweet_table.append tweet_id (Tweet.New {author_id=uid; content=str});
       Userline_table.append uid (Userline.NewTweet {tweet_id=tweet_id});
       List.iter (new_tweet tweet_id) fids;
-    end 
+    end
 
 (*let get_tweet tid = 
   let ctxt = Tweet_table.get tid (Tweet.Get) in

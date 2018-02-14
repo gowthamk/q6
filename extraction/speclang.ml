@@ -163,9 +163,9 @@ module SymbolicVal  = struct
         | Eq (sv1,sv2) -> (f sv1)^" = "^(f sv2)
         | Gt (sv1,sv2) -> (f sv1)^" > "^(f sv2)
         | Lt (sv1,sv2) -> (f sv1)^" < "^(f sv2)
-        | Not sv -> "~("^(f sv)^")"
-        | And svs -> "("^(String.concat " && " @@ List.map f svs)^")"
-        | Or svs -> "("^(String.concat " || " @@ List.map f svs)^")"
+        | Not sv -> "¬("^(f sv)^")"
+        | And svs -> (String.concat " ∧ " @@ List.map f svs)
+        | Or svs -> (String.concat " ∨ " @@ List.map f svs)
         | ConstInt i -> string_of_int i
         | ConstBool b -> string_of_bool b
         | ConstString s -> s
@@ -418,7 +418,6 @@ end
 module Predicate =
 struct
   type t = BoolExpr of SymbolicVal.t
-    | BoolExprGrd of SymbolicVal.t
     | If of t * t 
     | Iff of t * t 
     | Forall of Type.t * (Ident.t -> t)
@@ -427,14 +426,11 @@ struct
 
   let of_sv sv = BoolExpr sv 
 
-  let of_sv_grd sv = BoolExprGrd sv
-
   let of_svs svs = match svs with
     | [] -> BoolExpr (S.ConstBool true)
     | _ -> BoolExpr (S.And svs)
 
   let rec to_string = function BoolExpr sv -> S.to_string sv
-    | BoolExprGrd sv -> S.to_string sv
     | If (v1,v2) -> (to_string v1)^" => "^(to_string v2)
     | Iff (v1,v2) -> (to_string v1)^" <=> "^(to_string v2)
     | Forall (ty,f) -> 
@@ -472,7 +468,6 @@ struct
   let rec simplify (assumps: S.t list) (p:t) = 
     match p with
       | BoolExpr s -> BoolExpr (S.simplify assumps s)
-      | BoolExprGrd s -> BoolExprGrd (S.simplify assumps s)
       | If (p1,p2) -> 
           let p1' = simplify assumps p1 in
             (match p1' with
@@ -484,22 +479,17 @@ struct
                             simplify assumps p2)
 
   let simplify (pe: t list) (sv:S.t) = 
-    let peWithoutGrds = List.filter (function BoolExprGrd _ -> false
-                                     | _ -> true) pe in
     let (atoms,others) = List.partition 
                           (function BoolExpr _ -> true
-                                  | _ -> false) peWithoutGrds in
-    let atomsForPrinting = List.concat @@ 
+                                  | _ -> false) pe in
+    let atoms = List.concat @@ 
             List.map (function BoolExpr (S.And x) -> x 
                              | BoolExpr x -> [x]
                              | _ -> failwith "Impossible!") atoms in
     let _ = dprintf !_dsimpl "ASSUMPS (BEFORE SIMPLIFICATION):\n" in
     let _ = List.iteri (fun i s -> 
-              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atomsForPrinting in
-    let atoms' = S.simplify_all @@ List.concat @@ 
-            List.map (function BoolExpr (S.And x) -> x 
-                             | BoolExpr x -> [x]
-                             | _ -> failwith "Impossible!") atoms in
+              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atoms in
+    let atoms' = S.simplify_all atoms in
     let others' = List.map (simplify atoms') others in
     let _ = dprintf !_dsimpl "ASSUMPS:\n" in
     let _ = List.iteri (fun i s -> 
@@ -509,6 +499,7 @@ struct
     let _ = dprintf !_dsimpl "AFTER: %s\n\n" @@ S.to_string sv' in
     let pe' = (List.map (fun x -> BoolExpr x) atoms')@others' in
     (pe',sv')
+    (*(pe,sv')*) (* TODO: change it back! *)
 
   let test_simplify () = 
     let open S in
