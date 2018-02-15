@@ -39,7 +39,6 @@ module SV = SymbolicVal
 
 module KE = Light_env.Make(struct include Kind end)
 module TE = Light_env.Make(struct include Type end)
-module VE = Light_env.Make(struct include SymbolicVal end)
 
 let (<<) f g x = f(g x)
 

@@ -1,6 +1,7 @@
 open Types
 open Typedtree
 open Printf
+open Light_env
 
 let dprintf = function 
   | true -> Printf.printf
@@ -85,15 +86,27 @@ struct
   let txn_nop = Ident.create "txn_nop"
 end
 
-(*module KE = Light_env.Make(struct include Kind end)
-module VE = Light_env.Make(struct include SymbolicVal end)*)
-
-module Fun = struct
+module rec Fun : sig
   type t = T of {name: Ident.t; 
                  rec_flag: bool;
                  args_t: (Ident.t * type_desc) list; 
                  res_t: type_desc;
-                 body: expression
+                 body: expression;
+                 fun_ve: VE.t option
+                 }
+  val make : ?name:Ident.t ->
+           rec_flag:bool ->
+           args_t:(Ident.t * Types.type_desc) list ->
+           res_t:Types.type_desc -> body:Typedtree.expression -> t
+  val name : t -> Ident.t
+  val anonymous : Ident.t
+end = struct
+  type t = T of {name: Ident.t; 
+                 rec_flag: bool;
+                 args_t: (Ident.t * type_desc) list; 
+                 res_t: type_desc;
+                 body: expression;
+                 fun_ve: VE.t option
                  }
 
   let name (T {name}) = name
@@ -101,35 +114,46 @@ module Fun = struct
   let anonymous = Ident.create "<anon>"
 
   let make ?(name=anonymous) ~rec_flag ~args_t ~res_t ~body = 
-    T {name=name; rec_flag=rec_flag; args_t=args_t; 
+    T {name=name; rec_flag=rec_flag; args_t=args_t; fun_ve=None;
        res_t=res_t; body=body}
 end
 
-module Kind = struct
- type t = Uninterpreted 
-        | Variant of Cons.t list (* Cons.t includes a recognizer *)
-        | Enum of Ident.t list
-        | Extendible of Ident.t list ref
-        | Alias of Type.t
-
-  let to_string = function Uninterpreted -> "Uninterpreted type"
-    | Variant cons_list -> 
-        let cons_names = List.map 
-                           (fun (Cons.T {name}) -> Ident.name name)
-                           cons_list in
-          "Variant ["^(String.concat "," cons_names)^"]"
-    | Enum ids -> 
-        let id_names = List.map
-                         (fun id -> Ident.name id) ids in
-          "Enum ["^(String.concat "," id_names)^"]"
-    | Extendible ids -> 
-        let id_names = List.map
-                         (fun id -> Ident.name id) !ids in
-          "Extendible ["^(String.concat "," id_names)^"]"
-    | Alias typ -> "Alias of "^(Type.to_string typ)
-end
-
-module SymbolicVal  = struct
+and SymbolicVal : sig
+  type t = Bot
+    | Var of Ident.t
+    | App of Ident.t * t list
+    | Eq of t * t
+    | Gt of t * t
+    | Lt of t * t
+    | Not of t
+    | And of t list
+    | Or of t list
+    | ConstInt of int
+    | ConstBool of bool
+    | ConstString of string
+    | ConstUnit
+    | List of t list (* manifest prefix *) * 
+              t option (* unmanifest suffix *)
+    | Option of t option
+    | ITE of t * t * t
+    | Fun of Fun.t (* No closures. Only functions. *)
+    | Record of (Ident.t * t) list
+    | EffCons of Cons.t (* Effect Constructor; to store in TE *)
+    | NewEff of Cons.t * t option
+    | DelayedITE of bool ref * t * t (* resolved only when necesary. *)
+  val to_string : t -> string 
+  val print : (< get : unit -> string; inc : unit -> 'a; .. > as 'a) ->
+              t -> unit
+  val simplify : t list -> t -> t
+  val simplify_all : t list -> t list
+  val ground : t -> t
+  val ite : t * t * t -> t
+  val cons : t * t -> t
+  val nil : t
+  val none : t
+  val some : t -> t
+  val app : Ident.t * t list -> t
+end = struct
   type t = Bot
     | Var of Ident.t
     | App of Ident.t * t list
@@ -413,6 +437,42 @@ module SymbolicVal  = struct
   (*let ground v = simplify [] @@ ground v*)
   let ite (v1,v2,v3) = ITE (v1,v2,v3)
   let app ((v1:Ident.t),(v2s : t list)) = App (v1,v2s)
+end
+
+and 
+
+VE : sig 
+  type t
+  val fold_name : (Ident.t -> SymbolicVal.t -> 'b -> 'b) -> t -> 'b -> 'b
+  val add : Ident.t -> SymbolicVal.t -> t -> t
+  val find_name : string -> t -> SymbolicVal.t
+  val empty : t
+end = struct 
+include Light_env.Make(struct include SymbolicVal end) 
+end
+
+module Kind = struct
+ type t = Uninterpreted 
+        | Variant of Cons.t list (* Cons.t includes a recognizer *)
+        | Enum of Ident.t list
+        | Extendible of Ident.t list ref
+        | Alias of Type.t
+
+  let to_string = function Uninterpreted -> "Uninterpreted type"
+    | Variant cons_list -> 
+        let cons_names = List.map 
+                           (fun (Cons.T {name}) -> Ident.name name)
+                           cons_list in
+          "Variant ["^(String.concat "," cons_names)^"]"
+    | Enum ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) ids in
+          "Enum ["^(String.concat "," id_names)^"]"
+    | Extendible ids -> 
+        let id_names = List.map
+                         (fun id -> Ident.name id) !ids in
+          "Extendible ["^(String.concat "," id_names)^"]"
+    | Alias typ -> "Alias of "^(Type.to_string typ)
 end
 
 module Predicate =

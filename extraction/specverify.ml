@@ -268,9 +268,7 @@ let doIt_get env typed_sv1 sv2 =
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
 
-let (unmanifest_list_map : (string*S.t list, Ident.t) Hashtbl.t) = Hashtbl.create 47
-
-let (partial_application_map : (Fun.t, KE.t*VE.t) Hashtbl.t) = Hashtbl.create 47
+let (unmanifest_list_map : (string*S.t list, Ident.t) Hashtbl.t) = Hashtbl.create 217
 
 let gen_rand_string length =
     let gen() = match Random.int(26+26+10) with
@@ -298,16 +296,10 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
    * The nature of symbolic execution guarantees that T is always a 
    * concrete type, and v2 and v are symbolic values.
    *)
-  (*let _ = printf "Doing %s\nWith Arguments:\n" (Ident.name fun_t.name) in
-  let _ = List.map (fun sv -> printf "%s " (S.to_string sv)) arg_svs in
-  let _ = printf "\n" in*)
-  let (xke', xve') = if Hashtbl.mem partial_application_map (Fun.T fun_t) 
-                     then 
-                      (*let _ = printf "Retrieving %s's ke&ve\n" (Ident.name fun_t.name) in*)
-                      let (ke, ve) = Hashtbl.find partial_application_map (Fun.T fun_t) in
-                      (KE.fold_name KE.add ke env.ke, VE.fold_name VE.add ve env.ve)
-                     else (env.ke, env.ve) in 
-  let env1 = {env with curr_fun=(fun_t.name, arg_svs);ke=xke';ve=xve'} in
+  let xve' = match fun_t.fun_ve with
+             | Some ve -> VE.fold_name VE.add ve env.ve
+             | _ -> env.ve in
+  let env1 = {env with curr_fun=(fun_t.name, arg_svs);ve=xve'} in
   let typbinds = List.map (fun (a,tye) -> 
                            (Ident.create a, 
                             Kind.Alias (type_of_tye env1.ke tye)))
@@ -356,8 +348,8 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
       (*Generate a new function name by appending arg_svs as a string to function name*)
       let arg_string = List.fold_right (fun sv acc -> acc^(S.to_string sv)) arg_svs "" in
       let new_name = (Ident.name fun_t.name) ^ arg_string in
-      let new_fun = Fun.T {fun_t with name=(Ident.create new_name);args_t=new_args_t} in
-      let _ = Hashtbl.add partial_application_map new_fun (xke, xve) in
+      let new_fun = Fun.T {fun_t with name=(Ident.create new_name);
+                            args_t=new_args_t; fun_ve=Some xve} in
       (S.Fun new_fun, env)
 
 and doIt_expr env (expr:Typedtree.expression) : S.t * env = 
