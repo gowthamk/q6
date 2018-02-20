@@ -43,7 +43,8 @@ let pervasives = [("Pervasives.@@", "@@"); ("Pervasives.=", "=");
                   ("Pervasives.>", ">");
                   ("Pervasives.>=", ">=");
                   ("Pervasives.<", "<");
-                  ("Pervasives.<=", "<=");]
+                  ("Pervasives.<=", "<=");
+                  ("Debug.my_fst", "my_fst"); ]
 
 let s_pervasives = [("=", fun x y -> S.Eq (x,y)); 
                     ("&&", fun x y -> S.And [x;y]); 
@@ -52,7 +53,8 @@ let s_pervasives = [("=", fun x y -> S.Eq (x,y));
                     (">", fun x y -> S.Gt (x,y));
                     ("<", fun x y -> S.Lt (x,y));
                     (">=", fun x y -> S.Or [S.Gt (x,y); S.Eq(x,y)]);
-                    ("<=", fun x y -> S.Or [S.Lt (x,y); S.Eq(x,y)]);]
+                    ("<=", fun x y -> S.Or [S.Lt (x,y); S.Eq(x,y)]);
+                    ("my_fst", fun x y -> S.App (Ident.create "my_fst",[x;y]));]
 
 let is_pervasive id = List.mem_assoc (Ident.name id) s_pervasives 
 
@@ -542,7 +544,9 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                                  (doIt e2) in
         let sv =  S.ite (true_grd, v1, v2) in
           (sv, env3)
-    | _ -> failwith "Unimpl. expr" in 
+    | _ -> (Printtyped.expression 0 Format.str_formatter expr; 
+            print_string @@ Format.flush_str_formatter ();
+            failwith "Unimpl1. expr") in 
     res
   (*let (sv, env) = res in
   let assumps = (List.concat @@ List.map 
@@ -799,7 +803,10 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                                      with Not_found -> not_found @@ tmp_name
                                           ^" function not found" in
                         let env' = {env with txn=Fun.name my_fun1} in
-                        let (_, env2', vcs2') = doIt_fun env' my_fun1 in
+                        let (body_sv, env2', vcs2') = doIt_fun env' my_fun1 in
+                        (*let _ = printf "----- Body SV ------\n" in
+                        let _ = P.print (P.of_sv body_sv) in
+                        let _ = printf "--------------------\n" in*)
                           (env2', vcs@vcs2')) (env1, []) txn_list in
   let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
   (* Printing program preds *)

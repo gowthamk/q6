@@ -1,12 +1,14 @@
 open Types
 open Typedtree
 open Printf
+open Utils
 
 let dprintf = function 
   | true -> Printf.printf
   | false -> (Printf.ifprintf stdout)
 (* Debug print flags *)
 let _dsimpl = ref false;;
+let _dsimpl_asn = ref false;;
 
 module Type = 
 struct
@@ -164,6 +166,10 @@ struct
         | Lt (sv1,sv2) -> (f sv1)^" < "^(f sv2)
         | Not sv -> "¬("^(f sv)^")"
         | And svs -> (String.concat " ∧ " @@ List.map f svs)
+        | Or [Gt (s11,s12); Eq (s21,s22)] 
+            when s11 = s21 && s12 = s22 -> (f s11)^" >= "^(f s12)
+        | Or [Lt (s11,s12); Eq (s21,s22)] 
+            when s11 = s21 && s12 = s22 -> (f s11)^" <= "^(f s12)
         | Or svs -> (String.concat " ∨ " @@ List.map f svs)
         | ConstInt i -> string_of_int i
         | ConstBool b -> string_of_bool b
@@ -215,6 +221,17 @@ struct
           print ind' sv;
           printf "%s)\n" ind
         end in
+    let print_mult rel svs = 
+      let sep = " "^rel^" " in
+      let str = String.concat sep @@ List.map f svs in
+      let inline_s = Printf.sprintf "%s%s" ind str in
+        if slen inline_s <= 100 then
+          printf "%s\n" inline_s
+        else  begin
+          printf "%s(%s\n" ind rel;
+          List.iter (fun sv -> print ind'' sv) svs;
+          printf "%s)\n" ind
+        end in
       match x with 
         | Var id -> prints @@ Ident.name id
         | App (id,svs) ->  prints @@ (Ident.name id)^"("
@@ -223,26 +240,17 @@ struct
         | Gt (sv1,sv2) -> print_bin ">" (sv1,sv2)
         | Lt (sv1,sv2) -> print_bin "<" (sv1,sv2)
         | Not sv -> print_un "¬" sv
-        | And svs -> 
-            let str = String.concat " ∧ " @@ List.map f svs in
-            let inline_s = Printf.sprintf "%s%s" ind str in
-              if slen inline_s <= 100 then
-                printf "%s\n" inline_s
-              else  begin
-                printf "%s(∧\n" ind;
-                List.iter (fun sv -> print ind'' sv) svs;
-                printf "%s)" ind
-              end
-        | Or svs -> prints @@ "("^(String.concat " || " @@ List.map f svs)^")"
+        | And svs -> print_mult "∧" svs
+        | Or svs -> print_mult "∨" svs
         | ConstInt i -> prints @@ string_of_int i
         | ConstBool b -> prints @@ string_of_bool b
         | ConstString s -> prints s
         | ConstUnit -> prints "()"
-        | List (svs,s) -> prints @@ (String.concat "::" @@ List.map f svs)
-            ^(if List.length svs = 0 then "" else "::")
-            ^(match s with | None -> "[]" | Some sv -> f sv)
+        | List ([],None) -> prints "[]"
+        | List (svs,None) -> print_mult "::" svs
+        | List (svs,Some l) -> print_mult "::" (svs@[l])
         | Option None -> prints "None" 
-        | Option (Some sv) -> prints @@ "Some "^(f sv)
+        | Option (Some sv) -> print_un "Some" sv
         | ITE (grd,sv1,sv2) -> 
             let inline_s = Printf.sprintf "%s(if (%s) {" 
                             ind (f grd) in
@@ -316,6 +324,9 @@ struct
             simplify_rec assumps c
         | ITE (a, ITE (b,c,d), e) when (d = e) ->
             simplify_rec assumps (ITE (And [a;b], c, d))
+        | ITE (ITE(a,b,c),d,e) -> 
+            simplify_rec assumps @@ 
+            ITE (Or [And [a;b]; And [Not a;c]], d, e)
         | ITE (a,b,c) -> 
             let a' = simplify_rec assumps a in
             let b' = simplify_rec (a'::assumps) b in
@@ -327,14 +338,28 @@ struct
             if a' = a then gv else simplify_rec assumps @@ Option (Some a')
         | And [] -> ConstBool true
         | And [sv] -> simplify_rec assumps sv
-        | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
-            simplify_rec assumps @@ 
-              And (List.filter (fun sv -> not (assumps |= sv)) svs)
+        (*| And [ITE (a1,b1,c1); ITE (a2,b2,c2)] -> 
+            simplify_rec assumps @@ *)
+        (* Conversion to DNF *)
         | And svs when (List.exists (function (And _) -> true
                                        | _ -> false) svs) ->
                 simplify_rec assumps @@ 
                   And (List.concat @@ List.map (function (And svs') -> svs'
                                                   | sv -> [sv]) svs)
+        | And svs when (List.exists (function (Or _) -> true 
+                                            | _ -> false) svs) ->
+            let conjuncts = List.fold_left 
+                (fun conjs sv -> match sv with
+                   | Or or_svs -> 
+                       List.map (fun (conj,or_sv) -> conj@[or_sv]) 
+                        @@ List.cross_product conjs or_svs
+                   | _ -> List.map (fun conj -> conj @ [sv]) conjs)
+                [[]] svs in
+            let disjuncts = List.map (fun c -> And c) conjuncts in
+            simplify_rec assumps @@ Or disjuncts
+        | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
+            simplify_rec assumps @@ 
+              And (List.filter (fun sv -> not (assumps |= sv)) svs)
         | And svs -> 
             let do_simplify sv = 
               simplify_rec ((List.filter (fun sv' -> sv' <> sv) svs)@assumps) sv in
@@ -368,6 +393,11 @@ struct
               if v1' = v1 && v2' = v2 
               then gv
               else simplify_rec assumps @@ Gt (v1',v2')
+        | Lt (v1, v2) -> 
+            let (v1',v2') = (simplify_rec assumps v1, simplify_rec assumps v2) in
+              if v1' = v1 && v2' = v2 
+              then gv
+              else simplify_rec assumps @@ Lt (v1',v2')
         | Not (ConstBool true) -> ConstBool false
         | Not (ConstBool false) -> ConstBool true
         | Not v -> 
@@ -459,18 +489,22 @@ struct
   let _iff (t1,t2) = Iff (t1,t2)
   let forall ty f = Forall (ty,f)
 
-  let rec simplify (assumps: S.t list) (p:t) = 
+  let simplify_if (assumps: S.t list) (p:t) = 
     match p with
-      | BoolExpr s -> BoolExpr (S.simplify assumps s)
-      | If (p1,p2) -> 
-          let p1' = simplify assumps p1 in
-            (match p1' with
-              | BoolExpr (S.ConstBool true) -> simplify assumps p2
-              | BoolExpr (S.ConstBool false) -> 
-                                    BoolExpr (S.ConstBool true)
-              | BoolExpr s1 -> If (p1', simplify (assumps@[s1]) p2))
-      | Iff (p1,p2) -> Iff (simplify assumps p1, 
-                            simplify assumps p2)
+      | If (BoolExpr s1, BoolExpr s2) -> 
+          let s1' = S.simplify assumps s1 in
+          let f x = BoolExpr (S.simplify (assumps@x) s2) in
+            (match s1' with
+              | S.ConstBool true -> [f []]
+              | S.ConstBool false -> [BoolExpr (S.ConstBool true)]
+              | S.Or disjs -> 
+                  List.map (fun d -> If (BoolExpr d, f [d])) disjs
+              | _ -> [If (BoolExpr s1', f [s1'])])
+      | BoolExpr _ | Iff (_,_) -> 
+          failwith "P.simplify_if: Unexpected!" 
+
+  let simplify_ifs assumps ifs = 
+    List.concat @@ List.map (simplify_if assumps) ifs
 
   let simplify (pe: t list) (sv:S.t) = 
     let (atoms,others) = List.partition 
@@ -480,17 +514,21 @@ struct
             List.map (function BoolExpr (S.And x) -> x 
                              | BoolExpr x -> [x]
                              | _ -> failwith "Impossible!") atoms in
-    let _ = dprintf !_dsimpl "ASSUMPS (BEFORE SIMPLIFICATION):\n" in
+    let _ = dprintf !_dsimpl_asn "ASSUMPS (BEFORE SIMPLIFICATION):\n" in
     let _ = List.iteri (fun i s -> 
-              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atoms in
+              dprintf !_dsimpl_asn "%d. %s\n" i @@ S.to_string s) atoms in
     let atoms' = S.simplify_all atoms in
-    let others' = List.map (simplify atoms') others in
-    let _ = dprintf !_dsimpl "ASSUMPS:\n" in
+    let others' = simplify_ifs atoms' others in
+    let _ = dprintf !_dsimpl_asn "ASSUMPS:\n" in
     let _ = List.iteri (fun i s -> 
-              dprintf !_dsimpl "%d. %s\n" i @@ S.to_string s) atoms' in
-    let _ = dprintf !_dsimpl "BEFORE: %s\n" @@ S.to_string sv in
+              dprintf !_dsimpl_asn "%d. %s\n" i @@ S.to_string s) atoms' in
     let sv' = S.simplify atoms' sv in
-    let _ = dprintf !_dsimpl "AFTER: %s\n\n" @@ S.to_string sv' in
+    let _ = if !_dsimpl && sv' <> sv then begin
+        printf "BEFORE:\n";
+        S.print empty_indent sv;
+        printf "AFTER: \n";
+        S.print empty_indent sv';
+      end in
     let pe' = (List.map (fun x -> BoolExpr x) atoms')@others' in
     (pe',sv')
     (*(pe,sv')*) (* TODO: change it back! *)
