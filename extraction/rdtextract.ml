@@ -128,6 +128,15 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
                     str_items in 
     Tableschema.make ~id_t: id_t ~eff_t:eff_t
 
+let get_after_n l n = 
+  let rec get_after_n_rec cnt l =
+    if cnt >= List.length l then [] 
+    else
+      if cnt >= n then 
+        (List.nth l cnt) :: (get_after_n_rec (cnt+1) l) 
+      else get_after_n_rec (cnt+1) l in
+  get_after_n_rec 0 l
+
 let extract_funs (str_items) = 
   let (reads, writes, invs, aux) = (ref [], ref [], ref [], ref []) in
   let open Asttypes in
@@ -138,17 +147,13 @@ let extract_funs (str_items) =
             let (args,body) = Misc.extract_lambda case in
             let open Types in
             let arrow_t = vb_expr.exp_type.desc in
-            let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in
-            (*VERRRRRRRY DIRTY HACK. FIX IT!*)
-            (* For some reason, when a function has > 2 args, arg_ts doesn't get any arguments after the second one*)
-            (* Making arg_ts and arg the same length, by appending the type of the last arg to arg_ts*)
-            let rec hack_arg_ts arg_ts arg len =
-              if List.length arg_ts = len then arg_ts else hack_arg_ts (arg_ts@[arg]) arg len in
-            let arg_ts' = if (List.length args) = (List.length arg_ts) then arg_ts else hack_arg_ts arg_ts (List.hd (List.rev arg_ts)) (List.length args) in
-            (*DIRTY HACK ENDS*) 
+            (*let strf = Format.std_formatter  in
+            let _ = Printtyp.raw_type_expr strf vb_expr.exp_type in
+            let _ = Format.fprintf strf "\n" in*)
+            let (arg_ts,res_t) = Misc.uncurry_arrow arrow_t in 
               Fun.make ~name: (Ident.create loc.txt) 
                    ~rec_flag: rec_flag
-                   ~args_t: (List.zip args arg_ts') 
+                   ~args_t: (List.zip args arg_ts) 
                    ~res_t: res_t ~body: body in
             if String.length loc.txt >= 4 && 
                Str.string_before loc.txt 4 = "get_" then
