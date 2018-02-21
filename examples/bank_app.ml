@@ -55,15 +55,20 @@ struct
   include Store_interface.Make(BA)
 end
 
+let compute_bal eff = 
+  match eff with 
+ | Some e -> (match e with 
+                | BA.Withdraw {amt=a} -> 0-a
+                | BA.Deposit {amt=a} -> a
+                | _ -> 0)
+ | None -> 0
+
+let add_bals b acc = b + acc
+
 let get_balance acc_id = 
   let ctxt = BA_table.get acc_id (BA.GetBalance) in
-  let bals = List.map (fun x -> match x with 
-                         | Some e -> (match e with 
-                                        | BA.Withdraw {amt=a} -> 0-a
-                                        | BA.Deposit {amt=a} -> a
-                                        | _ -> 0)
-                         | None -> 0) ctxt in
-  let bal = List.fold_right (fun b acc -> b + acc) bals 0 in
+  let bals = List.map compute_bal ctxt in
+  let bal = List.fold_right add_bals bals 0 in
     bal
 
 let do_withdraw acc_id a = 
