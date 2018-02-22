@@ -267,7 +267,7 @@ let exists_in_tweet_table e =
          | _ -> false)
   | _ -> true
 
-let inv_fun uid' = 
+let inv_new_tweet uid' = 
   List.forall (Userline_table.get uid' (Userline.Get)) exists_in_tweet_table
 
 (*let get_userline uid = 
