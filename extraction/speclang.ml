@@ -377,6 +377,12 @@ end = struct
             simplify_rec assumps b
         | ITE (a,b,c) when (assumps |= (Not a)) -> 
             simplify_rec assumps c
+        | ITE (a, ConstBool true, ConstBool false) -> 
+            simplify_rec assumps a
+        | ITE (a, b, ConstBool false) -> 
+            simplify_rec assumps @@ And [a;b]
+        | ITE (a, ConstBool true, c) -> 
+            simplify_rec assumps @@ Or [a;c]
         | ITE (a, ITE (b,c,d), e) when (d = e) ->
             simplify_rec assumps (ITE (And [a;b], c, d))
         | ITE (ITE(a,b,c),d,e) -> 

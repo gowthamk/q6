@@ -273,23 +273,6 @@ let doIt_get env typed_sv1 sv2 =
 let (unmanifest_list_map : (string * S.t list, Ident.t) Hashtbl.t) 
     = Hashtbl.create 217
 
-let gen_rand_string length =
-    let gen() = match Random.int(26+26+10) with
-        n when n < 26 -> int_of_char 'a' + n
-      | n when n < 26 + 26 -> int_of_char 'A' + n - 26
-      | n -> int_of_char '0' + n - 26 - 26 in
-    let gen _ = String.make 1 (char_of_int(gen())) in
-    String.concat "" (Array.to_list (Array.init length gen))
-
-let get_after_n l n = 
-  let rec get_after_n_rec cnt l =
-    if cnt >= List.length l then [] 
-    else
-      if cnt >= n then 
-        (List.nth l cnt) :: (get_after_n_rec (cnt+1) l) 
-      else get_after_n_rec (cnt+1) l in
-  get_after_n_rec 0 l
-
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   (*
    * (KE['a -> T], TE, PE, VE[x -> v2] | e --> v <| (TE',PE',C)
@@ -299,6 +282,8 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
    * The nature of symbolic execution guarantees that T is always a 
    * concrete type, and v2 and v are symbolic values.
    *)
+  let n_args_t = List.length fun_t.args_t in
+  let n_arg_svs = List.length arg_svs in
   let typbinds = List.map (fun (a,tye) -> 
                            (Ident.create a, 
                             Kind.Alias (type_of_tye env.ke tye)))
@@ -307,8 +292,7 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
                        (fun ke (a,typ) -> KE.add a typ ke)
                        ke typbinds in
   (*Only bind args till (List.length arg_svs) number of arguments.*)
-  let bound_args_t = List.take (List.length arg_svs) 
-                               fun_t.args_t in
+  let bound_args_t = List.take n_arg_svs fun_t.args_t in
   let argbinds = List.combine (List.map fst bound_args_t) arg_svs in
   let bind_args ve = List.fold_left 
                        (fun ve (arg,sv) -> match sv with
@@ -333,34 +317,39 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   let bind_closure_typs ke = match fun_t.clos_ke with
              | Some clos_ke -> KE.union clos_ke ke
              | _ -> ke in
-  if List.length fun_t.args_t = List.length arg_svs then
+  if n_args_t = n_arg_svs then 
     (* Full application of a closure *)
     let xke = List.fold_left (fun ke f -> f ke) env.ke
                 [bind_closure_typs; bind_typs] in
     let xve = List.fold_left (fun ve f -> f ve) env.ve
                 [bind_closure_args; bind_args] in
     let xenv = {env with ke=xke; ve=xve} in
-    try
-      let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
-      let (pe',body_sv') = P.simplify xenv'.pe body_sv in
-      let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
-        (body_sv', env')
-    with | UListMatched ->
+    let res_ty = type_of_tye xke (Misc.to_tye fun_t.res_t) in
+    let abstract_fun_app () = 
       let fname = Ident.name fun_t.name in
       let args = fun_t.clos_args @ arg_svs in
-      if Hashtbl.mem unmanifest_list_map (fname, args) then
-         (S.Var (Hashtbl.find unmanifest_list_map (fname, args)), env)
-      else
-         let res_v = Ident.create @@ fresh_name () in 
-         let res_ty = type_of_tye xke (Misc.to_tye fun_t.res_t) in
-         let xte = TE.add res_v res_ty env.te in
-         let _ = Hashtbl.add unmanifest_list_map (fname, args) res_v in
-           (S.Var res_v, {env with te = xte}) 
-  else 
+      if Hashtbl.mem unmanifest_list_map (fname, args) then 
+        (S.Var (Hashtbl.find unmanifest_list_map (fname, args)), 
+         env)
+      else 
+        let res_v = Ident.create @@ fresh_name () in 
+        let xte = TE.add res_v res_ty env.te in
+        let _ = Hashtbl.add unmanifest_list_map 
+                   (fname, args) res_v in
+          (S.Var res_v, {env with te = xte}) in
+    match (env.is_inv, res_ty) with
+      | (false, Type.Bool) -> abstract_fun_app ()
+      | _ -> 
+          try 
+            let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
+            let (pe',body_sv') = P.simplify xenv'.pe body_sv in
+            let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
+              (body_sv', env') 
+          with | UListMatched -> abstract_fun_app ()
+  else
     (* Partial application of a closure *)
     let unbound_args_t = List.rev @@ List.take 
-        (List.length fun_t.args_t - List.length arg_svs) @@
-        List.rev fun_t.args_t in
+        (n_args_t - n_arg_svs) @@ List.rev fun_t.args_t in
     let clos_ke' = List.fold_left (fun ke f -> f ke) KE.empty
                    [bind_closure_typs; bind_typs] in
     let clos_ve' = List.fold_left (fun ve f -> f ve) VE.empty
@@ -825,7 +814,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 2 (* k'*) in
+  let _ = k := 5 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -869,6 +858,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                           (env2', vcs@vcs2')) (env1, []) txn_list in
   let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
   (* Printing program preds *)
+  let _ = printf "--- Txn Preds ----\n" in
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in
@@ -880,15 +870,22 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                     ^" function not found" in
   let is_pre = ref false in
   let env2 = 
-      {env1 with txn=Fun.name my_fun2; ke=env1'.ke; 
+      {env1 with txn=Fun.name my_fun2; 
+                 is_inv=true;
+                 ke=env1'.ke; 
                  ssn=ssn2;
                  show=(fun e -> 
                          DelayedITE(is_pre, 
                                     S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
                                                  S.Var ssn1)),
                                     S.ConstBool true))} in
-  let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
+  let (_, env2'(*{ke,effs} used*), vcs2) = doIt_inv env2 my_fun2 in
   let [(te2,inv_prog,inv)] = vcs2 in
+  (* Printing invariant program preds *)
+  let _ = printf "--- Inv Fn Preds ----\n" in
+  let _ = List.iteri 
+            (fun i p -> printf "%d.\n" i; P.print p) 
+            inv_prog in
   let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
   (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
     match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
@@ -927,6 +924,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       is_pre := true;
       P.ground inv
     end in
+  let _ = printf "--- Precondition ----\n" in
+  let _ = P.print pre in
   let prog = 
     begin
       is_pre := false;
@@ -941,6 +940,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       is_pre := false;
       P.ground inv
     end in
+  let _ = printf "--- Postcondition ----\n" in
+  let _ = P.print post in
   let new_te_list = List.map (fun te1 -> 
                       TE.fold_name 
                          (fun id ty te -> 
