@@ -9,6 +9,7 @@ module P = Predicate
 module VC = Vc
 
 exception Inconsistency
+exception UListMatched
 let unmanifest_list = Ident.create @@ "!L";;
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
 type env = {txn: Ident.t; 
@@ -24,7 +25,6 @@ type env = {txn: Ident.t;
             path: S.t list; (* constraints that are true on the
                                current path *)
             effs: Ident.t list; (* Effects generated *)
-            curr_fun: Ident.t * S.t list;
             ve:VE.t}
 
 (* Symbolic Trace *)
@@ -44,7 +44,8 @@ let pervasives = [("Pervasives.@@", "@@"); ("Pervasives.=", "=");
                   ("Pervasives.>", ">");
                   ("Pervasives.>=", ">=");
                   ("Pervasives.<", "<");
-                  ("Pervasives.<=", "<=");]
+                  ("Pervasives.<=", "<=");
+                  ("Debug.my_fst", "my_fst"); ]
 
 let s_pervasives = [("=", fun x y -> S.Eq (x,y)); 
                     ("&&", fun x y -> S.And [x;y]); 
@@ -53,7 +54,8 @@ let s_pervasives = [("=", fun x y -> S.Eq (x,y));
                     (">", fun x y -> S.Gt (x,y));
                     ("<", fun x y -> S.Lt (x,y));
                     (">=", fun x y -> S.Or [S.Gt (x,y); S.Eq(x,y)]);
-                    ("<=", fun x y -> S.Or [S.Lt (x,y); S.Eq(x,y)]);]
+                    ("<=", fun x y -> S.Or [S.Lt (x,y); S.Eq(x,y)]);
+                    ("my_fst", fun x y -> S.App (Ident.create "my_fst",[x;y]));]
 
 let is_pervasive id = List.mem_assoc (Ident.name id) s_pervasives 
 
@@ -268,24 +270,8 @@ let doIt_get env typed_sv1 sv2 =
   let ret_sv = S.List (ys, Some (S.Var l)) in
     (ret_sv,env')
 
-let (unmanifest_list_map : (string*S.t list, Ident.t) Hashtbl.t) = Hashtbl.create 217
-
-let gen_rand_string length =
-    let gen() = match Random.int(26+26+10) with
-        n when n < 26 -> int_of_char 'a' + n
-      | n when n < 26 + 26 -> int_of_char 'A' + n - 26
-      | n -> int_of_char '0' + n - 26 - 26 in
-    let gen _ = String.make 1 (char_of_int(gen())) in
-    String.concat "" (Array.to_list (Array.init length gen))
-
-let get_after_n l n = 
-  let rec get_after_n_rec cnt l =
-    if cnt >= List.length l then [] 
-    else
-      if cnt >= n then 
-        (List.nth l cnt) :: (get_after_n_rec (cnt+1) l) 
-      else get_after_n_rec (cnt+1) l in
-  get_after_n_rec 0 l
+let (unmanifest_list_map : (string * S.t list, Ident.t) Hashtbl.t) 
+    = Hashtbl.create 217
 
 let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
   (*
@@ -296,28 +282,18 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
    * The nature of symbolic execution guarantees that T is always a 
    * concrete type, and v2 and v are symbolic values.
    *)
-  let xve' = match fun_t.fun_ve with
-             | Some ve -> VE.fold_name VE.add ve env.ve
-             | _ -> env.ve in
-  let env1 = {env with curr_fun=(fun_t.name, arg_svs);ve=xve'} in
+  let n_args_t = List.length fun_t.args_t in
+  let n_arg_svs = List.length arg_svs in
   let typbinds = List.map (fun (a,tye) -> 
                            (Ident.create a, 
-                            Kind.Alias (type_of_tye env1.ke tye)))
+                            Kind.Alias (type_of_tye env.ke tye)))
                  tyebinds in
-  (* Special casing for symbolic lists *)
   let bind_typs ke = List.fold_left 
                        (fun ke (a,typ) -> KE.add a typ ke)
                        ke typbinds in
-  (*Only bind args till (List.length arg_svs) number of arguments, to generalize for 
-    partial application case.*)
-  let min_length = List.length arg_svs in
-  let rec bind_args_min_list cnt = 
-     if cnt < min_length then 
-       let (arg,_) = List.nth fun_t.args_t cnt in
-       let r1 = (arg, List.nth arg_svs cnt) in
-       r1::bind_args_min_list (cnt+1)
-     else [] in
-  let argbinds = bind_args_min_list 0 in
+  (*Only bind args till (List.length arg_svs) number of arguments.*)
+  let bound_args_t = List.take n_arg_svs fun_t.args_t in
+  let argbinds = List.combine (List.map fst bound_args_t) arg_svs in
   let bind_args ve = List.fold_left 
                        (fun ve (arg,sv) -> match sv with
                           | S.Fun (Fun.T fun_t) -> 
@@ -325,31 +301,65 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
                                 VE.add arg sv(*'*) ve
                           | _ -> VE.add arg sv ve) 
                        ve argbinds in
+   (* bind_self will be called iff: 
+    * 1. this is a recursive function, and
+    * 2. Closure for this function doesn't yet exist. *)
   let bind_self ve =
     (* Rec function M.f is referred as f in its body *)
     let qualif_name = Ident.name fun_t.name in
     let unqualif_name = List.last @@ 
                           Str.split (Str.regexp "\.") qualif_name in
       VE.add (Ident.create unqualif_name) (S.Fun (Fun.T fun_t)) ve in
-  let xke = List.fold_left (fun ke f -> f ke) env1.ke
-              [bind_typs] in
-  let xve = List.fold_left (fun ve f -> f ve) env1.ve
-              [bind_args; if fun_t.rec_flag then bind_self 
-                          else (fun ve -> ve)] in
-  let xenv = {env1 with ke=xke; ve=xve} in
-  if List.length fun_t.args_t = List.length arg_svs then
-      let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
-      let (pe',body_sv') = P.simplify xenv'.pe body_sv in
-      let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
-        (body_sv', env')
-  else 
-      (*Partial Application Case: Generate a new curried function*)
-      let new_args_t = get_after_n fun_t.args_t (List.length arg_svs) in
-      (*Generate a new function name by appending arg_svs as a string to function name*)
-      let arg_string = List.fold_right (fun sv acc -> acc^(S.to_string sv)) arg_svs "" in
-      let new_name = (Ident.name fun_t.name) ^ arg_string in
-      let new_fun = Fun.T {fun_t with name=(Ident.create new_name);
-                            args_t=new_args_t; fun_ve=Some xve} in
+  let bind_closure_args ve = match fun_t.clos_ve with
+             | Some clos_ve -> VE.union clos_ve ve
+             | _ -> if fun_t.rec_flag 
+                    then bind_self ve else ve in
+  let bind_closure_typs ke = match fun_t.clos_ke with
+             | Some clos_ke -> KE.union clos_ke ke
+             | _ -> ke in
+  if n_args_t = n_arg_svs then 
+    (* Full application of a closure *)
+    let xke = List.fold_left (fun ke f -> f ke) env.ke
+                [bind_closure_typs; bind_typs] in
+    let xve = List.fold_left (fun ve f -> f ve) env.ve
+                [bind_closure_args; bind_args] in
+    let xenv = {env with ke=xke; ve=xve} in
+    let res_ty = type_of_tye xke (Misc.to_tye fun_t.res_t) in
+    let abstract_fun_app () = 
+      let fname = Ident.name fun_t.name in
+      let args = fun_t.clos_args @ arg_svs in
+      if Hashtbl.mem unmanifest_list_map (fname, args) then 
+        (S.Var (Hashtbl.find unmanifest_list_map (fname, args)), 
+         env)
+      else 
+        let res_v = Ident.create @@ fresh_name () in 
+        let xte = TE.add res_v res_ty env.te in
+        let _ = Hashtbl.add unmanifest_list_map 
+                   (fname, args) res_v in
+          (S.Var res_v, {env with te = xte}) in
+    match (env.is_inv, res_ty) with
+      | (false, Type.Bool) -> abstract_fun_app ()
+      | _ -> 
+          try 
+            let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
+            let (pe',body_sv') = P.simplify xenv'.pe body_sv in
+            let env' = {xenv' with ke=env.ke; ve=env.ve; pe=pe'} in
+              (body_sv', env') 
+          with | UListMatched -> abstract_fun_app ()
+  else
+    (* Partial application of a closure *)
+    let unbound_args_t = List.rev @@ List.take 
+        (n_args_t - n_arg_svs) @@ List.rev fun_t.args_t in
+    let clos_ke' = List.fold_left (fun ke f -> f ke) KE.empty
+                   [bind_closure_typs; bind_typs] in
+    let clos_ve' = List.fold_left (fun ve f -> f ve) VE.empty
+                    [bind_closure_args; bind_args] in
+    let clos_args' = fun_t.clos_args @ arg_svs in
+    let new_fun = Fun.T {fun_t with args_t=unbound_args_t;
+                                    clos_ke = Some clos_ke';
+                                    clos_ve=Some clos_ve'; 
+                                    clos_args = clos_args';
+                                    rec_flag = false} in
       (S.Fun new_fun, env)
 
 and doIt_expr env (expr:Typedtree.expression) : S.t * env = 
@@ -467,7 +477,6 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
     (* f e *) (* (\x.e) e *)
     | Texp_apply (e1, largs) -> 
         let (sv1,env') = doIt_expr env e1 in
-        (*let _ = printf "???%s\n" (S.to_string sv1) in*)
         let e2s = map_snd_opts largs in
         let (sv2s,env'') = doIt_exprs env' e2s in
         let (res_sv, res_env) = match sv1 with
@@ -552,26 +561,7 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
         let (sv,env'')  = let open S in match scru_sv with
           (* List and Option are special cases where the interpreter 
            * does some of the reasoning. *)
-          | List ([],Some l) -> 
-              let x = (*Use the same unmanifest list while evaluating 
-                        expressions at the same program location *) 
-                      (let (fname, args) = env.curr_fun in
-                      let _ = printf "Processing unmanifest list\n" in
-                      let _ = printf "Function: %s\n" (Ident.name fname) in
-                      let _ = printf "Args:\n" in
-                      let _ = List.map (fun sv1 -> printf "%s\n" (S.to_string sv1)) args in
-                      if Hashtbl.mem unmanifest_list_map (Ident.name fname, args) then
-                         let res = Hashtbl.find unmanifest_list_map (Ident.name fname, args) in
-                         let _ = printf "Reused umlist variable: %s --> %s\n"
-                         (Ident.name fname) (Ident.name res) in
-                         res
-                      else
-                         let res = Ident.create @@ fresh_name () in 
-                         let _ = printf "%s --> %s\n" (Ident.name fname) (Ident.name res) in
-                         let _ = Hashtbl.add unmanifest_list_map (Ident.name fname, args) res in
-                          res) in
-              let xte = TE.add x exptyp env'.te in
-                (S.Var x, {env' with te=xte})
+          | List ([],Some l) -> raise UListMatched
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
           | Option op -> doIt_option_cases env' op cases 
           | NewEff (Cons.T cons_t, argop) -> 
@@ -596,7 +586,9 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                                  (doIt e2) in
         let sv =  S.ite (true_grd, v1, v2) in
           (sv, env3)
-    | _ -> failwith "Unimpl. expr" in 
+    | _ -> (Printtyped.expression 0 Format.str_formatter expr; 
+            print_string @@ Format.flush_str_formatter ();
+            failwith "Unimpl1. expr") in 
     res
   (*let (sv, env) = res in
   let assumps = (List.concat @@ List.map 
@@ -822,7 +814,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 25 (* k'*) in
+  let _ = k := 5 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -830,6 +822,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                               Ident.create @@ "E"^(string_of_int i)) in
   let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
   let oper_cons = extract_oper_cons schemas in
+<<<<<<< HEAD
   let _ = Printf.printf "Number of transactions: %d\n" (List.length writes) in
   List.map (fun my_fun1 ->
     let (ssn2,ssn1) = (fresh_ssn (), fresh_ssn ()) in
@@ -874,12 +867,14 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
     let (effs1, effs2) = (env1'.effs, env2'.effs) in
     let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
     (* Printing program preds *)
+    let _ = printf "--- Txn Preds ----\n" in
     let _ = List.iteri 
               (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
               List.concat wr_prog_list in
     let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
     let wr_inv_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs2 in
     (* Printing inv preds *)
+    let _ = printf "--- Inv Fn Preds ----\n" in
     let _ = List.iteri 
               (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
               List.concat wr_inv_list in
@@ -917,11 +912,14 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
            P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
                                    S.Var ssn_id), 
                   P.of_sv @@ in_set v @@ List.rev effs)) in
+<<<<<<< HEAD
     let pre = 
       begin
         is_pre := true;
         P.ground inv
       end in
+    let _ = printf "--- Precondition ----\n" in
+    let _ = P.print pre in
     let prog = 
       begin
         is_pre := false;
@@ -936,6 +934,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
         is_pre := false;
         P.ground inv
       end in
+    let _ = printf "--- Postcondition ----\n" in
+    let _ = P.print post in
     let new_te = TE.fold_name 
                    (fun id ty te -> 
                       try (ignore @@ TE.find_name (Ident.name id) te; 

@@ -4,6 +4,7 @@ sig
   type t
   val empty: t
   val add: Ident.t -> elem -> t -> t
+  val union: t -> t -> t (* Add first ve to second ve*)
   val find_same: Ident.t -> t -> elem
   val find_name: string -> t -> elem
   val find_all: string -> t -> elem list

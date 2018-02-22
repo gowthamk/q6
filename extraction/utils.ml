@@ -6,6 +6,7 @@ sig
   val tabulate : int -> (int -> 'a) -> 'a list 
   val last : 'a list -> 'a
   val take : int -> 'a list -> 'a list
+  val cross_product : 'a list -> 'b list -> ('a*'b) list
 end =
 struct
   include List
@@ -30,6 +31,11 @@ struct
   let rec take n l = match n with
     | 0 -> []
     | _ -> (hd l)::(take (n-1) (tl l))
+
+  let rec cross_product l1 l2 =  match (l1,l2) with
+    | ([],_) | (_,[]) -> []
+    | (x::xs,_) -> (map (fun y -> (x,y)) l2) @ 
+                   (cross_product xs l2)
 
 end
 
