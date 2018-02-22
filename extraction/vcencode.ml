@@ -441,8 +441,10 @@ let assert_tpcc_contracts () =
   let ptxn = const_of_name "do_payment_txn" in
   let dget = const_of_name "District_Get" in
   let oget = const_of_name "Order_Get" in
+  let olget = const_of_name "Orderline_Get" in
   let dsetnoid = const_of_name "District_SetNextOID" in
   let oadd = const_of_name "Order_Add" in
+  let oladd = const_of_name "Orderline_Add" in
   let wsetytd = const_of_name "Warehouse_SetYTD" in
   let dsetytd = const_of_name "District_SetYTD" in
   let dgetytd = const_of_name "District_GetYTD" in
@@ -450,11 +452,11 @@ let assert_tpcc_contracts () =
   let hget = const_of_name "History_Get" in
   let hadd = const_of_name "History_Append" in
   let f a b c d =
-    mk_and [oper(a) @= dsetnoid;
+    mk_and [(*oper(a) @= dsetnoid;*)
             txn(a) @= nwordtxn;
-            oper(b) @= dget;
+            (*oper(b) @= dget;
             oper(c) @= oadd;
-            oper(d) @= oget;
+            oper(d) @= oget;*)
             vis(a, b);
             so(a, c);
             so(b, d);
@@ -462,10 +464,10 @@ let assert_tpcc_contracts () =
             sameobj(c, d);
             sametxn(a,c)] @=> vis(c,d) in
   let g a b c d = 
-    mk_and [oper(a) @= dsetytd;
+    mk_and [(*oper(a) @= dsetytd;
             oper(b) @= wsetytd;
             oper(c) @= dgetytd;
-            oper(d) @= wgetytd;
+            oper(d) @= wgetytd;*)
             txn(a) @= ptxn;
             sametxn(a,b);
             so(b, a);
@@ -474,7 +476,7 @@ let assert_tpcc_contracts () =
             sameobj(b, d);
             sametxn(c, d);
             vis(b, d)] @=> vis(a, c) in
-  let h a b c d = 
+  (*let h a b c d = 
     mk_and [oper(a) @= dsetytd;
             oper(b) @= hadd;
             oper(c) @= dgetytd;
@@ -486,12 +488,12 @@ let assert_tpcc_contracts () =
             sameobj(a, c);
             sameobj(b, d);
             sametxn(c, d);
-            vis(a, c)] @=> vis(b, d) in
+            vis(a, c)] @=> vis(b, d) in*)
   (*let g a b = (mk_app ts [a]) @!= (mk_app ts [b]) in*)
-  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
+  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
     _assert_all asns
 
-let assert_contracts () = assert_mb_contracts ()
+let assert_contracts () = assert_tpcc_contracts ()
 (*
  * Encoding
  *)
@@ -561,7 +563,8 @@ let assert_neg_const name =
 
 let discharge (txn_id, vc) = 
   let open VC in
-  let vc_name = "VC"(*fresh_vc_name ()*) in
+  let vc_name = "VC_"^(Ident.name txn_id)(*fresh_vc_name ()*) in
+  let _ = Printf.printf "Here\n" in
   let out_chan = open_out @@ vc_name^".z3" in
     begin
       declare_types (vc.kbinds, vc.tbinds);
@@ -587,7 +590,9 @@ let doIt vcs =
     failwith "Log couldn't be opened."
   else
     let _ = List.map (fun vc ->
+      let _ = Printf.printf ">>\n" in
       let res = discharge vc in
+      let _ = reset () in
       begin
         (match res with 
           | SATISFIABLE -> printf "SAT\n"
