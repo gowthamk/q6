@@ -6,6 +6,7 @@ sig
   val tabulate : int -> (int -> 'a) -> 'a list 
   val last : 'a list -> 'a
   val take : int -> 'a list -> 'a list
+  val distinct_pairs: 'a list -> ('a*'a) list
   val cross_product : 'a list -> 'b list -> ('a*'b) list
 end =
 struct
@@ -31,6 +32,11 @@ struct
   let rec take n l = match n with
     | 0 -> []
     | _ -> (hd l)::(take (n-1) (tl l))
+
+  let rec distinct_pairs l = match l with
+    | [] -> [] | [x] -> [] 
+    | x::xs -> (List.map (fun x' -> (x,x')) xs)
+                @ (distinct_pairs xs)
 
   let rec cross_product l1 l2 =  match (l1,l2) with
     | ([],_) | (_,[]) -> []

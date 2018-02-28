@@ -92,6 +92,9 @@ struct
   let so = Ident.create "so"
   let hb = Ident.create "hb"
   let sameobj = Ident.create "sameobj"
+  let ar = Ident.create "ar"
+  let ar_oper = Ident.create "ar_oper"
+  let ar_id = Ident.create "ar_id"
   let ssn = Ident.create "ssn"
   let txn = Ident.create "txn"
   (* KE's addition *)

@@ -814,7 +814,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 5 (* k'*) in
+  let _ = k := 20 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -931,7 +931,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       is_pre := false;
       List.map P.ground @@ List.concat @@ 
         wr_prog_list @ [inv_prog; 
-                        comm_assertions; 
+                        (*comm_assertions;*)
                         [mk_ssn_cstr ssn1 effs1; 
                          mk_ssn_cstr ssn2 effs2]]
     end in

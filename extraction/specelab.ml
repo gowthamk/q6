@@ -81,22 +81,20 @@ let extract_oper_cons (schemas) : (Ident.t * Cons.t) list =
 let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) = 
   (* 1. ObjType typedef to KE *)
   let table_names = List.map fst schemas in
-  let add_ObjType = 
-    let all_cons = List.map 
-                     (fun table_name -> mk_cons 
-                              (Effcons.T {name=table_name;
-                                          args_t=[]}) schemas) 
-                     table_names in
-      KE.add (Ident.create "ObjType") (Kind.Variant all_cons) in
+  let add_ObjType ke = 
+    (* ObjType constructors are tablenames *)
+    KE.add (Ident.create "ObjType") (Kind.Enum table_names) ke in
   (* 2. Id typedef to KE *)
-  let add_Id = KE.add (Ident.create "Id") Kind.Uninterpreted in
+  let add_Id ke = KE.add (Ident.create "Id") Kind.Uninterpreted ke in
   (* 3. Oper typedef to KE *)
   let aliased_oper_cons = extract_oper_cons schemas in
   let (_,oper_cons) = List.split aliased_oper_cons in
-    (* Nop is also an Oper cons *)
+  (* Nop is also an Oper cons *)
   let oper_cons = oper_cons@[Cons.nop] in
+  (* Oper type is an enum type *)
+  let oper_names = List.map Cons.name oper_cons in
   let add_Oper = KE.add (Ident.create "Oper") 
-                   (Kind.Variant oper_cons) in
+                   (Kind.Enum oper_names) in
   (* 4. Qualified effcons aliases to VE *)
   (* eg: "User.Add" :-> SV.EffCons (Cons.T {name="User_Add", ...}) *)
   let add_effcons_aliases ve = List.fold_left 
@@ -146,7 +144,9 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
     let id = Ident.create @@ "mkkey_"^(Type.to_string typ) in
       TE.add id refTy te in
   let add_mkkeys te = List.fold_left add_mkkey_for_type te id_types in
-  let add_mkkey_int te = 
+  (* Added as a hack to make the first version of commutativity
+   * implementation work for the Microblog application *)
+	let add_mkkey_int te = 
     TE.add (Ident.create @@ "mkkey_int") (Type.Arrow (Type.Int, Type.id)) te in
   (* 9. Add reads, writes and aux funs to VE *)
   let add_funs ve = List.fold_left 
@@ -193,13 +193,18 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_oper te = 
     let typ = Type.Arrow (Type.eff,Type.oper) in
       TE.add (L.oper) typ te in
-  (* 16. vis, so, hb, and sameobj relations to TE *)
+  (* 16. vis, so, hb, sameobj, and ar* relations to TE *)
   let add_rels te = 
     let typ = Type.Arrow (Type.eff,Type.Arrow (Type.eff, Type.Bool)) in
+    let typ2 = Type.Arrow (Type.oper,Type.Arrow (Type.oper, Type.Bool)) in
+    let typ3 = Type.Arrow (Type.id,Type.Arrow (Type.id, Type.Bool)) in
       TE.add (L.vis) typ @@ 
       TE.add (L.so) typ @@
       TE.add (L.hb) typ @@
-      TE.add (L.sameobj) typ te in
+      TE.add (L.sameobj) typ @@
+      TE.add (L.ar) typ @@ 
+      TE.add (L.ar_oper) typ2 @@ 
+      TE.add (L.ar_id) typ3 te in
   (*16a. happens before relation for ids*)
   let add_hbid te =  
     let typ = Type.Arrow (Type.id,Type.Arrow (Type.id, Type.Bool)) in
@@ -225,8 +230,9 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
       [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
-       add_ssn; add_ssn_nop; add_txn; add_seqno; add_currtxn; add_objid; 
-       add_mkkey_int;add_objtyp; add_oper; add_rels; add_hbid; add_show] in
+       (* add_mkkey_int; *)add_ssn; add_ssn_nop; add_txn; 
+       add_seqno; add_currtxn; add_objid; 
+       add_objtyp; add_oper; add_rels; add_hbid; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty
       [add_effcons_aliases; add_accessor_svs; add_funs; add_Inconsistency] in
