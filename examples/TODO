@@ -1,0 +1,15 @@
+TODO:
+
+1. Observe the Z3 VC. See why it's timing out. Ints? 
+Yes. Also, the encoding of SO, which uses Ints..
+
+With k=20:
+- After removing mkkey_int and commutativity (but with "hbid"):
+  - Verification time > 5m. Counterexample time = 2m38s
+- After removing hbid:
+  - Verification time > 3m. Counterexample time = 25s. 
+- After removing "declare-datatypes":
+  - Verification time = 10m. Counterexample time = 6s.
+2. Change the encoding of Ints and SO. Does the performance increase?
+3. Change the encoding of commutativity. Simplify it.
+
