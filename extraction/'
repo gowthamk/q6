@@ -328,67 +328,19 @@ let declare_vars te =
                  | Type.Unit -> ()
                  | _ -> declare_const name typ) te
 
-let assert_arbitration_axioms ke = 
-  (* Arbitration relations are total orders *)
-  let ar_irrefl = forallE1 (fun a -> mk_not @@ ar(a,a)) in
-  let ar_trans = forallE3 
-                  (fun a b c -> 
-                     (ar(a,b) @& ar(b,c)) @=> ar(a,c)) in
-  let ar_total = forallE2 (fun a b -> 
-                    mk_or [ar(a,b); ar(b,a); a @= b]) in
-  let aro_irrefl = forallO1 (fun a -> mk_not @@ ar_oper(a,a)) in
-  let aro_trans = forallO3 
-                  (fun a b c -> 
-                     (ar_oper(a,b) @& ar_oper(b,c)) 
-                            @=> ar_oper(a,c)) in
-  let aro_total = forallO2 (fun a b -> 
-                    mk_or [ar_oper(a,b); ar_oper(b,a); a @= b]) in     
-  let ari_irrefl = forallId1 (fun a -> mk_not @@ ar_id(a,a)) in
-  let ari_trans = forallId3 
-                  (fun a b c -> 
-                     (ar_id(a,b) @& ar_id(b,c)) 
-                            @=> ar_id(a,c)) in
-  let ari_total = forallId2 (fun a b -> 
-                    mk_or [ar_id(a,b); ar_id(b,a); a @= b]) in
-  (* concretizing arbitration *)
-  let eff_consts = match KE.find_name "Eff" ke with
-                    | Kind.Enum es -> es
-                    | _ -> failwith "Unexpected!" in
-  let s_effs = List.map (const_of_id) eff_consts in
-  let (_,s_eff_pairs) = 
-        List.fold_left (fun (pre,acc) cur -> 
-                              (cur,(pre,cur)::acc)) 
-        (List.hd s_effs,[]) 
-        (List.tl s_effs) in
-  let ar_of_effs = mk_and @@ List.rev_map ar s_eff_pairs in
-  let oper_consts = match KE.find_name "Oper" ke with
-                     | Kind.Enum os -> os
-                     | _ -> failwith "Unexpected!" in
-  let s_opers = List.map (const_of_id) oper_consts in
-  let (_,s_oper_pairs) = 
-        List.fold_left (fun (pre,acc) cur -> 
-                              (cur,(pre,cur)::acc)) 
-        (List.hd s_opers,[]) 
-        (List.tl s_opers) in
-  let ar_of_opers = mk_and @@ List.rev_map ar_oper s_oper_pairs in
-  let ar_aro_ari =  forallE2
-        (fun e1 e2 -> 
-          let (oe1,oe2) = (oper e1, oper e2) in
-          let (ie1,ie2) = (objid e1, objid e2) in
-          ar(e1,e2) @=> mk_or [ar_oper(oe1,oe2); 
-                               mk_and [oe1 @= oe2; 
-                                       (*ar_id(ie1,ie2)*)]]) in
-  let ar_q_axioms = [ar_irrefl; ar_trans; ar_total;
-                     aro_irrefl; aro_trans; aro_total;
-                     (*ari_irrefl; ari_trans; ari_total;*)
-                     ar_aro_ari] in
-  let ar_qf_axioms = [ar_of_effs; ar_of_opers] in
-  let ar_axioms = (List.map expr_of_quantifier ar_q_axioms) 
-                    @ ar_qf_axioms in
-  _assert_all ar_axioms
-
-
-let assert_mkey_axioms () = 
+let assert_axioms ke =
+  let s_NOP = const_of_id (Cons.name Cons.nop) in 
+  let s_ENOP = const_of_id (L.e_nop) in
+  let s_ssn_nop = const_of_id (L.ssn_nop) in
+  let s_txn_nop = const_of_id (L.txn_nop) in
+  (* _ENOP is the only NOP effect *)
+  let e_not_nop = forallE1 (fun a -> 
+                              (oper(a) @= s_NOP) @<=> (a @= s_ENOP)) in
+  (* ssn(_ENOP) = _nop_ssn *)
+  let enop_ssn = ssn(s_ENOP) @= s_ssn_nop in
+  (* txn(_ENOP) = _nop_txn *)
+  let enop_txn = txn(s_ENOP) @= s_txn_nop in
+  (* mkkey functions are bijections *)
   let mkkeys = all_mkkey_funs () in 
   let bijection f a b = ((mk_app f [a]) @= (mk_app f [b])) @=> (a @= b) in
   let mkkey_bijections = 
@@ -398,30 +350,16 @@ let assert_mkey_axioms () =
                   | _ -> failwith "mkkey_bijections: Unexpected" in
                   forall sorts (function [a;b] -> bijection mkkey_f a b
                                   | _ -> failwith "Impossible!")) mkkeys in
-  let mkkey_axioms = List.map expr_of_quantifier @@ 
-                      mkkey_bijections in
-  _assert_all mkkey_axioms
-
-let assert_nop_axioms () = 
-  let s_NOP = const_of_id (Cons.name Cons.nop) in 
-  let s_ENOP = const_of_id (L.e_nop) in
-  let s_ssn_nop = const_of_id (L.ssn_nop) in
-  let s_txn_nop = const_of_id (L.txn_nop) in
-  (* _ENOP is the only NOP effect *)
-  let e_not_nop = expr_of_quantifier @@ 
-          forallE1 (fun a -> 
-            (oper(a) @= s_NOP) @<=> (a @= s_ENOP)) in
-  (* ssn(_ENOP) = _nop_ssn *)
-  let enop_ssn = ssn(s_ENOP) @= s_ssn_nop in
-  (* txn(_ENOP) = _nop_txn *)
-  let enop_txn = txn(s_ENOP) @= s_txn_nop in
-  let nop_axioms = [e_not_nop; enop_ssn; enop_txn] in
-  _assert_all nop_axioms
-
-let assert_so_axioms () = 
-  let s_NOP = const_of_id (Cons.name Cons.nop) in 
   (* seq. nos are non-negative *)
   let seqno_pos = forallE1 (fun a -> seqno(a) @>= (mk_numeral_i 0)) in
+  (* sameobj *)
+  let sameobj_def = forallE2 
+                      (fun a b -> 
+                         sameobj(a,b) @<=> mk_and 
+                                            [oper(a) @!= s_NOP; 
+                                             oper(b) @!= s_NOP;
+                                             objtyp(a) @= objtyp(b);
+                                             objid(a) @= objid(b) ]) in
   (* so *)
   let so_def = forallE2 
                  (fun a b -> 
@@ -433,34 +371,9 @@ let assert_so_axioms () =
   let so_trans = forallE3 
                    (fun a b c -> 
                       (so(a,b) @& so(b,c)) @=> so(a,c)) in
-  let so_axioms = List.map expr_of_quantifier @@ 
-                  [seqno_pos; so_def; so_trans] in
-  _assert_all so_axioms
-
-let assert_vis_axioms () = 
-  let s_NOP = const_of_id (Cons.name Cons.nop) in 
-  (* sameobj *)
-  let sameobj_def = forallE2 
-                      (fun a b -> 
-                         sameobj(a,b) @<=> mk_and 
-                                            [oper(a) @!= s_NOP; 
-                                             oper(b) @!= s_NOP;
-                                             objtyp(a) @= objtyp(b);
-                                             objid(a) @= objid(b) ]) in
   (* vis => sameobj *)
   let vis_sameobj = forallE2 
                       (fun a b -> vis(a,b) @=> sameobj(a,b)) in
-  (* vis is irrefl *)
-  let vis_irrefl = forallE1 (fun a -> mk_not @@ vis(a,a)) in
-  (* vis is anti-symmetric *)
-  let vis_antisym = forallE2 
-                    (fun a b -> (vis(a,b) @& vis(b,a)) @=> a @=b) in
-  let vis_axioms = List.map expr_of_quantifier @@
-                   [sameobj_def; vis_sameobj; 
-                    vis_irrefl; vis_antisym] in
-  _assert_all vis_axioms
-
-let assert_hb_axioms () = 
   (* hb is (vis U so)+ *)
   let hb_def1 = forallE2
                   (fun a b -> 
@@ -470,20 +383,28 @@ let assert_hb_axioms () =
                      (hb(a,b) @& hb(b,c)) @=> hb(a,c)) in
   (* hb is irrefl *)
   let hb_irrefl = forallE1 (fun a -> mk_not @@ hb(a,a)) in
-  let hb_axioms = List.map expr_of_quantifier @@
-                   [hb_def1; hb_def2; hb_irrefl] in
-    _assert_all @@ hb_axioms
-
-let assert_axioms ke =
-  begin
-    assert_nop_axioms ();
-    assert_so_axioms ();
-    assert_vis_axioms ();
-    assert_hb_axioms ();
-    assert_mkey_axioms ();
-    assert_arbitration_axioms ke;
-  end
-                   
+  (* Arbitration relations are total orders *)
+  let ar_irrefl = forallE1 (fun a -> mk_not @@ ar(a,a)) in
+  let ar_trans = forallE3 
+                  (fun a b c -> 
+                     (ar(a,b) @& ar(b,c)) @=> ar(a,c)) in
+  let ar_total = forallE2
+                  (fun a b -> ar(a,b) @| ar(b,a)) in     
+  let aro_irrefl = forallO1 (fun a -> mk_not @@ ar_oper(a,a)) in
+  let aro_trans = forallO3 
+                  (fun a b c -> 
+                     (ar_oper(a,b) @& ar_oper(b,c)) 
+                            @=> ar_oper(a,c)) in
+  let aro_total = forallO2
+                  (fun a b -> ar_oper(a,b) @| ar_oper(b,a)) in     
+  (* hbid *)        
+  let qasns1 = [sameobj_def; so_def; so_trans; vis_sameobj;
+                e_not_nop; hb_def1; hb_def2; hb_irrefl; seqno_pos] in
+  let qasns2 = mkkey_bijections in
+  let asns1 = List.map (fun q -> expr_of_quantifier q) @@ 
+                List.concat [qasns1; qasns2] in
+  let asns2 = [enop_ssn; enop_txn] in
+    _assert_all @@ asns1@asns2
 
 let assert_mb_contracts () = 
   let gt = const_of_name "Tweet_Get" in
@@ -564,10 +485,8 @@ let assert_tpcc_contracts () =
   let ptxn = const_of_name "do_payment_txn" in
   let dget = const_of_name "District_Get" in
   let oget = const_of_name "Order_Get" in
-  let olget = const_of_name "Orderline_Get" in
   let dsetnoid = const_of_name "District_SetNextOID" in
   let oadd = const_of_name "Order_Add" in
-  let oladd = const_of_name "Orderline_Add" in
   let wsetytd = const_of_name "Warehouse_SetYTD" in
   let dsetytd = const_of_name "District_SetYTD" in
   let dgetytd = const_of_name "District_GetYTD" in
@@ -575,11 +494,11 @@ let assert_tpcc_contracts () =
   let hget = const_of_name "History_Get" in
   let hadd = const_of_name "History_Append" in
   let f a b c d =
-    mk_and [(*oper(a) @= dsetnoid;*)
+    mk_and [oper(a) @= dsetnoid;
             txn(a) @= nwordtxn;
-            (*oper(b) @= dget;
+            oper(b) @= dget;
             oper(c) @= oadd;
-            oper(d) @= oget;*)
+            oper(d) @= oget;
             vis(a, b);
             so(a, c);
             so(b, d);
@@ -587,10 +506,10 @@ let assert_tpcc_contracts () =
             sameobj(c, d);
             sametxn(a,c)] @=> vis(c,d) in
   let g a b c d = 
-    mk_and [(*oper(a) @= dsetytd;
+    mk_and [oper(a) @= dsetytd;
             oper(b) @= wsetytd;
             oper(c) @= dgetytd;
-            oper(d) @= wgetytd;*)
+            oper(d) @= wgetytd;
             txn(a) @= ptxn;
             sametxn(a,b);
             so(b, a);
@@ -599,7 +518,7 @@ let assert_tpcc_contracts () =
             sameobj(b, d);
             sametxn(c, d);
             vis(b, d)] @=> vis(a, c) in
-  (*let h a b c d = 
+  let h a b c d = 
     mk_and [oper(a) @= dsetytd;
             oper(b) @= hadd;
             oper(c) @= dgetytd;
@@ -611,15 +530,14 @@ let assert_tpcc_contracts () =
             sameobj(a, c);
             sameobj(b, d);
             sametxn(c, d);
-            vis(a, c)] @=> vis(b, d) in*)
+            vis(a, c)] @=> vis(b, d) in
   (*let g a b = (mk_app ts [a]) @!= (mk_app ts [b]) in*)
-  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
+  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
     _assert_all asns
 
-
-let assert_contracts () = ()
-(*
 let assert_contracts () = assert_mb_contracts ()
+(*
+let assert_contracts () = ()
    *)
 (*
  * Encoding
@@ -690,8 +608,7 @@ let assert_neg_const name =
 
 let discharge (txn_id, vc) = 
   let open VC in
-  let vc_name = "VC_"^(Ident.name txn_id)(*fresh_vc_name ()*) in
-  let _ = Printf.printf "Here\n" in
+  let vc_name = "VC"(*fresh_vc_name ()*) in
   let out_chan = open_out @@ vc_name^".z3" in
     begin
       declare_types (vc.kbinds, vc.tbinds);
@@ -717,9 +634,7 @@ let doIt vcs =
     failwith "Log couldn't be opened."
   else
     let _ = List.map (fun vc ->
-      let _ = Printf.printf ">>\n" in
       let res = discharge vc in
-      let _ = reset () in
       begin
         (match res with 
           | SATISFIABLE -> printf "SAT\n"

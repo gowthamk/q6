@@ -814,7 +814,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 5 (* k'*) in
+let _ = k := 20 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let _ = eff_consts := 
@@ -822,128 +822,131 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                               Ident.create @@ "E"^(string_of_int i)) in
   let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
   let oper_cons = extract_oper_cons schemas in
-<<<<<<< HEAD
-  let _ = Printf.printf "Number of transactions: %d\n" (List.length writes) in
-  List.map (fun my_fun1 ->
-    let (ssn2,ssn1) = (fresh_ssn (), fresh_ssn ()) in
-    let ke = KE.add (Ident.create "Eff") 
-                    (* An additional NOP effect for technical reasons *)
-                    (Kind.Enum (!eff_consts@[L.e_nop])) ke in
-    let te = TE.add ssn2 Type.ssn (TE.add ssn1 Type.ssn te) in
-    let env1 = {txn=Fun.name my_fun1; seqno=0; 
-                curr_fun=(Fun.name my_fun1, []);
-              ssn=ssn1; ke=ke; te=te;
-              pe=pe; path=[]; ve=ve; 
-              is_inv = false;
-              show=(fun eff -> S.ConstBool true);
-              effs=[]; 
-              (*te=TE.add ssn1 Type.ssn te List.fold_left 
-                    (fun te eff_const -> 
-                       TE.add eff_const Type.eff te) te !eff_consts*)} in
-    let (_, env1', vcs1) = doIt_fun env1 my_fun1 in
-    let is_pre = ref false in
-    let exp_inv_name = "inv_" ^ (String.sub (Ident.name @@ Fun.name my_fun1) 3 
-                        @@ (String.length (Ident.name @@ Fun.name my_fun1))-3) in
-    let _ = printf "Exp invariant: %s\n" (exp_inv_name) in
-    let my_fun2 = try List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = exp_inv_name)
+  let (ssn2,ssn1) = (fresh_ssn (), fresh_ssn ()) in
+  let ke = KE.add (Ident.create "Eff") 
+                  (* An additional NOP effect for technical reasons *)
+                  (Kind.Enum (!eff_consts@[L.e_nop])) ke in
+  let te = TE.add ssn2 Type.ssn (TE.add ssn1 Type.ssn te) in
+  let txn_list = List.map (fun (Fun.T x) -> Ident.name x.name) writes in
+  let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
+  let tmp_name1 = List.hd txn_list in
+  let my_fun1 = try List.find (fun (Fun.T x) -> 
+                                          Ident.name x.name = tmp_name1)
+                                   (writes)
+                             with Not_found -> not_found @@ tmp_name1 in
+  let env1 = {txn=Fun.name my_fun1; seqno=0; 
+                ssn=ssn1; ke=ke; te=te;
+                pe=pe; path=[]; ve=ve; 
+                is_inv = false;
+                show=(fun eff -> S.ConstBool true);
+                effs=[];} in
+  let (env1', vcs1) = List.fold_left (fun (env, vcs) tmp_name ->
+                        let my_fun1 = try List.find (fun (Fun.T x) -> 
+                                                  Ident.name x.name = tmp_name)
+                                           (writes)
+                                     with Not_found -> not_found @@ tmp_name
+                                          ^" function not found" in
+                        let env' = {env with txn=Fun.name my_fun1} in
+                        let (body_sv, env2', vcs2') = doIt_fun env' my_fun1 in
+                        (*let _ = printf "----- Body SV ------\n" in
+                        let _ = P.print (P.of_sv body_sv) in
+                        let _ = printf "--------------------\n" in*)
+                          (env2', vcs@vcs2')) (env1, []) txn_list in
+  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
+  (* Printing program preds *)
+  let _ = printf "--- Txn Preds ----\n" in
+  let _ = List.iteri 
+            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
+            List.concat wr_prog_list in
+  let tmp_name2 = "inv_fun" in
+  let my_fun2 = try List.find (fun (Fun.T x) -> 
+                            Ident.name x.name = tmp_name2)
                      (invs)
-               with Not_found -> not_found @@ exp_inv_name
+               with Not_found -> not_found @@ tmp_name2
                     ^" function not found" in
-    let env2 = 
-        {env1 with txn=Fun.name my_fun2; ke=env1'.ke; 
-                   ssn=ssn2;
-                   curr_fun=(Fun.name my_fun2, []);
-                   show=(fun e -> 
-                           DelayedITE(is_pre, 
-                                      S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
-                                                   S.Var ssn1)),
-                                      S.ConstBool true))} in
-    let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
-    let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
-    let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
-      match (vcs1,vcs2) with | ([st],[inv_vc]) -> (st,inv_vc)
-        | _ -> failwith "Specverify.doIt: Unexpected" in
-    let (effs1, effs2) = (env1'.effs, env2'.effs) in
-    let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
-    (* Printing program preds *)
-    let _ = printf "--- Txn Preds ----\n" in
-    let _ = List.iteri 
-              (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
-              List.concat wr_prog_list in
-    let (_, env2', vcs2) = doIt_inv env2 my_fun2 in
-    let wr_inv_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs2 in
-    (* Printing inv preds *)
-    let _ = printf "--- Inv Fn Preds ----\n" in
-    let _ = List.iteri 
-              (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
-              List.concat wr_inv_list in
-    let [(te2,inv_prog,inv)] = vcs2 in
-    let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
-    (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
-      match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
-        | _ -> failwith "Specverify.doIt: Unexpected" in*)
-    let (effs1, effs2) = (env1'.effs, env2'.effs) in
-    let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
-    let gen_or_list_successor opers eff1 eff2 = 
-        let (op::ops) = opers in 
-        let cond_for_op = get_arg_condition op eff1 eff2 schemas in
-        let eq_cond = S.Eq (S.App (L.oper, [S.Var eff2]), op) in
-        let same_op_cond = S.And (eq_cond :: cond_for_op) in
-        let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
-        P.of_sv (S.Or (same_op_cond::or_list)) in
-    let rec comm_assertion eff1 eff2 opers = 
-      match opers with
-      | x::xs -> if (List.length xs) > 0 
-          then (P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), 
-                       gen_or_list_successor (x::xs) eff1 eff2)) 
-                  :: (comm_assertion eff1 eff2 xs) 
-          else [P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), 
-                       P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff2]), x))]
-      | _ -> [] in
-    let comm_assertions = List.flatten @@ List.mapi 
-        (fun i eff -> if i<(!k-1) 
-          then comm_assertion eff 
-                  (List.nth !eff_consts (i+1)) oper_cons 
-          else []) !eff_consts in
-    let mk_ssn_cstr ssn_id effs = 
+  let is_pre = ref false in
+  let env2 = 
+      {env1 with txn=Fun.name my_fun2; 
+                 is_inv=true;
+                 ke=env1'.ke; 
+                 ssn=ssn2;
+                 show=(fun e -> 
+                         DelayedITE(is_pre, 
+                                    S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
+                                                 S.Var ssn1)),
+                                    S.ConstBool true))} in
+  let (_, env2'(*{ke,effs} used*), vcs2) = doIt_inv env2 my_fun2 in
+  let [(te2,inv_prog,inv)] = vcs2 in
+  (* Printing invariant program preds *)
+  let _ = printf "--- Inv Fn Preds ----\n" in
+  let _ = List.iteri 
+            (fun i p -> printf "%d.\n" i; P.print p) 
+            inv_prog in
+  let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
+  (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
+    match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
+      | _ -> failwith "Specverify.doIt: Unexpected" in*)
+  let (effs1, effs2) = (env1'.effs, env2'.effs) in
+  let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
+  let gen_or_list_successor opers eff1 eff2 = 
+      let (op::ops) = opers in 
+      let cond_for_op = get_arg_condition op eff1 eff2 schemas in
+      let eq_cond = S.Eq (S.App (L.oper, [S.Var eff2]), op) in
+      let same_op_cond = S.And (eq_cond :: cond_for_op) in
+      let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
+      P.of_sv (S.Or (same_op_cond::or_list)) in
+  let rec comm_assertion eff1 eff2 opers = 
+    match opers with
+    | x::xs -> if (List.length xs) > 0 
+        then (P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), 
+                     gen_or_list_successor (x::xs) eff1 eff2)) 
+                :: (comm_assertion eff1 eff2 xs) 
+        else [P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), 
+                     P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff2]), x))]
+    | _ -> [] in
+  let comm_assertions = List.flatten @@ List.mapi 
+      (fun i eff -> if i<(!k-1) 
+        then comm_assertion eff 
+                (List.nth !eff_consts (i+1)) oper_cons 
+        else []) !eff_consts in
+  let mk_ssn_cstr ssn_id effs = 
       P.forall Type.eff 
         (fun v -> 
            P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
                                    S.Var ssn_id), 
                   P.of_sv @@ in_set v @@ List.rev effs)) in
-<<<<<<< HEAD
-    let pre = 
-      begin
-        is_pre := true;
-        P.ground inv
-      end in
-    let _ = printf "--- Precondition ----\n" in
-    let _ = P.print pre in
-    let prog = 
-      begin
-        is_pre := false;
-        List.map P.ground @@ List.concat @@ 
-          wr_prog_list @ [inv_prog; 
-                          comm_assertions; 
-                          [mk_ssn_cstr ssn1 effs1; 
-                           mk_ssn_cstr ssn2 effs2]]
-      end in
-    let post = 
-      begin
-        is_pre := false;
-        P.ground inv
-      end in
-    let _ = printf "--- Postcondition ----\n" in
-    let _ = P.print post in
-    let new_te = TE.fold_name 
-                   (fun id ty te -> 
-                      try (ignore @@ TE.find_name (Ident.name id) te; 
-                            raise Not_found)
-                           (*failwith @@ (Ident.name id)^" variable \
-                                    duplicate found. Please rename.")*)
-                      with Not_found -> TE.add id ty te) te2 te1 in
-    let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
-                                  pre=pre; prog=prog; post=post} in
-    (*let _ = VC.print conc_vc in*)
-      (Fun.name my_fun1, conc_vc)) writes
+  let pre = 
+    begin
+      is_pre := true;
+      P.ground inv
+    end in
+  let _ = printf "--- Precondition ----\n" in
+  let _ = P.print pre in
+  let prog = 
+    begin
+      is_pre := false;
+      List.map P.ground @@ List.concat @@ 
+        wr_prog_list @ [inv_prog; 
+                        (*comm_assertions;*)
+                        [mk_ssn_cstr ssn1 effs1; 
+                         mk_ssn_cstr ssn2 effs2]]
+    end in
+  let post = 
+    begin
+      is_pre := false;
+      P.ground inv
+    end in
+  let _ = printf "--- Postcondition ----\n" in
+  let _ = P.print post in
+  let new_te_list = List.map (fun te1 -> 
+                      TE.fold_name 
+                         (fun id ty te -> 
+                            try (ignore @@ TE.find_name (Ident.name id) te; 
+                                  raise Not_found)
+                                 (*failwith @@ (Ident.name id)^" variable \
+                                          duplicate found. Please rename.")*)
+                            with Not_found -> TE.add id ty te) te2 te1) te_list  in
+  let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
+  let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
+                                pre=pre; prog=prog; post=post} in
+    [(Fun.name my_fun1, conc_vc)]

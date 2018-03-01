@@ -52,6 +52,18 @@ struct
     | [] -> true
     | x::xs -> (f x)&&(forall xs f)
 
+  let rec filter f l = match l with
+    | [] -> []
+    | x::xs -> if f x then x::filter f xs else filter f xs
+
+  let rec contains l x = match l with
+    | [] -> false
+    | y::ys -> y=x || contains ys x
+
+  let rec hd l = match l with
+    | [] -> raise Inconsistency
+    | x::xs -> x
+
   let rec exists l f = match l with
     | [] -> false
     | x::xs -> (f x)||(exists xs f)
@@ -90,7 +102,8 @@ end
 
 module Customer = struct
   type id = Uuid.t
-  type eff = GetBal
+  type eff = 
+    | GetBal
     | SetBal of {c_id:id; c_w_id: id; c_d_id: id; c_bal:int; ts:int}
     | GetYTDPayment
     | SetYTDPayment of {c_id:id; c_w_id: id; c_d_id: id; 
@@ -133,7 +146,9 @@ end
 module Order = struct
   type id = int
   type eff = Get 
-    | Add of {o_id: id; o_w_id: Warehouse.id; o_d_id: District.id; o_c_id: Customer.id; o_ol_cnt: int}
+    | Add of {o_id: id; o_w_id: Warehouse.id; o_d_id: District.id; 
+              o_carrier_id: int; o_c_id: Customer.id; o_ol_cnt: int}
+    | SetCarrier of {o_id: id; o_carrier_id: int}
 end
 
 module Order_table =
@@ -170,13 +185,27 @@ end
 module Orderline = struct
   type id = Order.id
   type eff = Get
-    | Add of  {ol_o_id: Order.id; ol_d_id: District.id; ol_w_id: Warehouse.id; ol_num: int; ol_amt: int; 
-               ol_i_id: Item.id; ol_supply_w_id: Warehouse.id;ol_qty: int}
+    | Add of  {ol_o_id: Order.id; ol_d_id: District.id; ol_w_id: Warehouse.id; 
+               ol_num: int; ol_amt: int; ol_i_id: Item.id; ol_supply_w_id: Warehouse.id;
+               ol_delivery_d: int; ol_qty: int}
+    | SetDeliveryDate of {ol_o_id: Order.id; ol_delivery_d: int}
 end
 
 module Orderline_table =
 struct
   include Store_interface.Make(Orderline)
+end
+
+module New_Order = struct 
+  type id = Order.id
+  type eff = Get
+     | Add of {no_o_id: Order.id; no_d_id: District.id; no_w_id: Warehouse.id}
+     | Remove of {no_o_id: Order.id; no_d_id: District.id; no_w_id: Warehouse.id}
+end
+
+module New_Order_table =
+struct
+  include Store_interface.Make(New_Order)
 end
 
 module DistrictCreate = struct
@@ -191,6 +220,8 @@ struct
 end
 
 type item_req = {ol_i_id: Item.id; ol_supply_w_id: Warehouse.id; ol_qty: int}
+
+(*<<<<<<<<<<AUXILIARY FUNCTIONS BEGIN>>>>>>>>>>>>>>>>*)
 
 let is_eff_max_nextoid did dwid ts1 eff1 =
   match eff1 with
@@ -315,70 +346,6 @@ let get_latest_stkcnt ireq_ol_i_id ireq_ol_supply_w_id =
   let stk_effs = Stock_table.get ireq_ol_i_id (Stock.Get) in
   find_stkcnt stk_effs stk_effs ireq_ol_supply_w_id
 
-let do_new_order_txn (*ireqs_no*) gen_olqty did wid cid dwid gen_oliid gen_olsupplywid = 
-  (* TODO: kind of ireqs not found *)
-  (*let ireqs = gen_list ireqs_no [] in*)
-  let ireqs = [1(*;2;3;4;5*)] in
-  let latest_nextoid = get_latest_nextoid did dwid in
-  let nextoid = latest_nextoid + 1 in
-  let ts1 = 0 (*int_of_float (Unix.time ())*) in
-    begin
-      District_table.append did (District.SetNextOID 
-      {d_id=did; 
-       d_w_id=wid; 
-       next_o_id=nextoid; 
-       ts=ts1});
-      (*Is this approach correct??*)
-      let dummy_oid = -1 in 
-      Order_table.append dummy_oid (Order.Add 
-       {o_id=latest_nextoid; o_w_id=wid; o_d_id=did; 
-             o_c_id=cid; o_ol_cnt=(List.length ireqs)});
-      List.iter 
-        (fun ireq -> 
-          let ireq_ol_i_id = gen_oliid in
-          let ireq_ol_supply_w_id = gen_olsupplywid in
-          let ireq_ol_qty = gen_olqty in
-          (*let qty = get_qty ireq_ol_i_id ireq_ol_supply_w_id in*)
-          let price = get_price ireq_ol_i_id in
-            begin
-              (*if qty >= ireq_ol_qty + 10 
-              then Stock_table.append ireq_ol_i_id (Stock.SetQuantity 
-              {s_i_id= ireq_ol_i_id; 
-               s_w_id= ireq_ol_supply_w_id; 
-               s_qty= qty - ireq_ol_qty; ts=ts1})
-              else 
-               (*stk.s_qty <- stk.s_qty - ireq_ol_qty + 91;*)
-                Stock_table.append ireq_ol_i_id 
-                (Stock.SetQuantity {s_i_id= ireq_ol_i_id; 
-                 s_w_id= ireq_ol_supply_w_id; 
-                 s_qty= (qty-ireq_ol_qty+91); 
-                ts=ts1});*)
-                (*stk.s_ytd <- stk.s_ytd + ireq_ol_qty;*)
-                (*let latest_ytd = get_ytd ireq_ol_i_id ireq_ol_supply_w_id in
-                Stock_table.append ireq_ol_i_id 
-                (Stock.SetYTDPayment {s_i_id= ireq_ol_i_id; 
-                 s_w_id= ireq_ol_supply_w_id; 
-                 c_ytd_payment= (latest_ytd + ireq_ol_qty);ts=ts1});*)
-                (*stk.s_order_cnt <- stk.s_order_cnt + 1;*)
-                (*let latest_cnt = get_latest_stkcnt ireq_ol_i_id ireq_ol_supply_w_id in
-                Stock_table.append ireq_ol_i_id 
-                (Stock.SetOrderCnt {s_i_id= ireq_ol_i_id; 
-                s_w_id= ireq_ol_supply_w_id; 
-                s_order_cnt= latest_cnt+1; 
-                ts= ts1});*)
-                (*db.order_lines <- db.order_lines @ [ol]*)
-              Orderline_table.append latest_nextoid (Orderline.Add 
-               {ol_o_id=latest_nextoid;
-                ol_d_id=did; 
-                ol_w_id=wid; 
-                ol_num=0; 
-                ol_i_id=ireq_ol_i_id; 
-                ol_supply_w_id=ireq_ol_supply_w_id; 
-                ol_amt=price * ireq_ol_qty;
-                ol_qty=ireq_ol_qty})
-            end ) ireqs
-    end
-
 let is_eff_max_oid did dwid oid1 eff1 = 
   match eff1 with 
   | Some z -> 
@@ -429,7 +396,7 @@ let rec find_warehouse_ytd dwid whs_effs whseffs =
                     then ytd1 else t
                   else t
                | _ -> t)
-    | _ -> t 
+    | _ -> t
 
 let get_warehouse_ytd dwid =
   let whs_effs = Warehouse_table.get dwid (Warehouse.GetYTD) in
@@ -542,36 +509,12 @@ let rec find_customer_pycnt cwid c_effs ceffs =
 let get_customer_pycnt cid cwid = 
   let c_effs = Customer_table.get cid (Customer.GetPaymentCnt) in
   find_customer_pycnt cwid c_effs c_effs
-  
-let do_payment_txn dummy_id_DistrictCreate dummy_id_History h_amt did dwid cdid cwid cid =
-  let ts1 = 0 in
-  begin
-    DistrictCreate_table.append dummy_id_DistrictCreate 
-    (DistrictCreate.DistrictAdd {d_id=did;w_id=dwid});
-    let w_ytd = get_warehouse_ytd dwid in
-    Warehouse_table.append dwid (Warehouse.SetYTD {w_id = dwid; ytd=w_ytd+h_amt; ts=ts1});
-    let d_ytd = get_district_ytd did dwid in
-    District_table.append did (District.SetYTD {d_id=did; d_w_id=dwid; 
-    ytd=d_ytd+h_amt; ts=ts1});
-    let c_bal = get_customer_bal cid cdid cwid in
-    Customer_table.append cid (Customer.SetBal{c_id=cid; c_w_id=cwid; 
-    c_d_id=cdid; c_bal=c_bal-h_amt; ts=ts1});
-    (*let c_ytd = get_customer_ytd cid cwid in*)
-    Customer_table.append cid (Customer.SetYTDPayment{c_id=cid; c_w_id=cwid; 
-    c_d_id=cdid; c_ytd_payment=h_amt; ts=ts1});
-    (*let c_pycnt = get_customer_pycnt cid cwid in
-    Customer_table.append cid (Customer.SetPaymentCnt{c_id=cid; c_w_id=cwid; 
-    c_d_id=cdid; c_payment_cnt=c_pycnt+1; ts=ts1});*)
-    History_table.append dummy_id_History 
-     (History.Append {h_w_id = dwid; h_d_id = did; 
-                      h_c_id = cid; h_c_w_id = cwid; 
-                      h_c_d_id = cdid; h_amount = h_amt})
-  end
 
- let get_did eff = 
+let get_did_by_distwarehouse wid eff = 
    match eff with
    | Some x -> (match x with 
-               | DistrictCreate.DistrictAdd {d_id=id1} -> Some id1
+               | DistrictCreate.DistrictAdd {d_id=id1; w_id=id2} -> 
+                 if id2=wid then Some id1 else None
                | _ -> None)
    | _ -> None
 
@@ -628,54 +571,202 @@ let do_payment_txn dummy_id_DistrictCreate dummy_id_History h_amt did dwid cdid 
                 | _ -> acc)
    | _ -> acc
 
+ let from_just x = 
+   match x with
+   | Some _ -> true
+   | _ -> false
+
+(* <<<<<<<<<<AUXILIARY FUNCTIONS END>>>>>>>>>>>>>>>>*)
+
+let do_new_order_txn (*ireqs_no*) gen_olqty did wid cid dwid gen_oliid gen_olsupplywid = 
+  (* TODO: kind of ireqs not found *)
+  (*let ireqs = gen_list ireqs_no [] in*)
+  let ireqs = [1(*;2;3;4;5*)] in
+  let latest_nextoid = get_latest_nextoid did dwid in
+  let nextoid = latest_nextoid + 1 in
+  let ts1 = 0 (*int_of_float (Unix.time ())*) in
+    begin
+      District_table.append did (District.SetNextOID 
+      {d_id=did; 
+       d_w_id=wid; 
+       next_o_id=nextoid; 
+       ts=ts1});
+      let dummy_oid = -1 in 
+      (*In the invariants, we'd like to fetch all the rows added here, so we use a 
+        dummy id to store all the records.*)
+      Order_table.append dummy_oid (Order.Add 
+       {o_id=latest_nextoid; o_w_id=wid; o_d_id=did; 
+        o_c_id=cid; o_ol_cnt=(List.length ireqs); o_carrier_id=(0-1)});
+      New_Order_table.append dummy_oid (New_Order.Add
+      {no_o_id=latest_nextoid; no_w_id=wid; no_d_id=did});
+      List.iter 
+        (fun ireq -> 
+          let ireq_ol_i_id = gen_oliid in
+          let ireq_ol_supply_w_id = gen_olsupplywid in
+          let ireq_ol_qty = gen_olqty in
+          (*let qty = get_qty ireq_ol_i_id ireq_ol_supply_w_id in*)
+          let price = get_price ireq_ol_i_id in
+            begin
+              (*if qty >= ireq_ol_qty + 10 
+              then Stock_table.append ireq_ol_i_id (Stock.SetQuantity 
+              {s_i_id= ireq_ol_i_id; 
+               s_w_id= ireq_ol_supply_w_id; 
+               s_qty= qty - ireq_ol_qty; ts=ts1})
+              else 
+               (*stk.s_qty <- stk.s_qty - ireq_ol_qty + 91;*)
+                Stock_table.append ireq_ol_i_id 
+                (Stock.SetQuantity {s_i_id= ireq_ol_i_id; 
+                 s_w_id= ireq_ol_supply_w_id; 
+                 s_qty= (qty-ireq_ol_qty+91); 
+                ts=ts1});*)
+                (*stk.s_ytd <- stk.s_ytd + ireq_ol_qty;*)
+                (*let latest_ytd = get_ytd ireq_ol_i_id ireq_ol_supply_w_id in
+                Stock_table.append ireq_ol_i_id 
+                (Stock.SetYTDPayment {s_i_id= ireq_ol_i_id; 
+                 s_w_id= ireq_ol_supply_w_id; 
+                 c_ytd_payment= (latest_ytd + ireq_ol_qty);ts=ts1});*)
+                (*stk.s_order_cnt <- stk.s_order_cnt + 1;*)
+                (*let latest_cnt = get_latest_stkcnt ireq_ol_i_id ireq_ol_supply_w_id in
+                Stock_table.append ireq_ol_i_id 
+                (Stock.SetOrderCnt {s_i_id= ireq_ol_i_id; 
+                s_w_id= ireq_ol_supply_w_id; 
+                s_order_cnt= latest_cnt+1; 
+                ts= ts1});*)
+                (*db.order_lines <- db.order_lines @ [ol]*)
+              Orderline_table.append latest_nextoid (Orderline.Add 
+               {ol_o_id=latest_nextoid;
+                ol_d_id=did; 
+                ol_w_id=wid; 
+                ol_num=0; 
+                ol_i_id=ireq_ol_i_id; 
+                ol_supply_w_id=ireq_ol_supply_w_id; 
+                ol_amt=price * ireq_ol_qty;
+                ol_delivery_d=(0-1);
+                ol_qty=ireq_ol_qty})
+            end ) ireqs
+    end
+  
+let do_payment_txn dummy_id_DistrictCreate dummy_id_History h_amt did dwid cdid cwid cid =
+  let ts1 = 0 in
+  begin
+    DistrictCreate_table.append dummy_id_DistrictCreate 
+    (DistrictCreate.DistrictAdd {d_id=did;w_id=dwid});
+    let w_ytd = get_warehouse_ytd dwid in
+    Warehouse_table.append dwid (Warehouse.SetYTD {w_id = dwid; ytd=w_ytd+h_amt; ts=ts1});
+    let d_ytd = get_district_ytd did dwid in
+    District_table.append did (District.SetYTD {d_id=did; d_w_id=dwid; 
+    ytd=d_ytd+h_amt; ts=ts1});
+    let c_bal = get_customer_bal cid cdid cwid in
+    Customer_table.append cid (Customer.SetBal{c_id=cid; c_w_id=cwid; 
+    c_d_id=cdid; c_bal=c_bal-h_amt; ts=ts1});
+    Customer_table.append cid (Customer.SetYTDPayment{c_id=cid; c_w_id=cwid; 
+    c_d_id=cdid; c_ytd_payment=h_amt; ts=ts1});
+    History_table.append dummy_id_History 
+     (History.Append {h_w_id = dwid; h_d_id = did; 
+                      h_c_id = cid; h_c_w_id = cwid; 
+                      h_c_d_id = cdid; h_amount = h_amt})
+  end
+
+let get_add_neword_dist wid did newords_eff = 
+  match newords_eff with
+  | Some x -> 
+    (match x with
+    | New_Order.Add {no_o_id = oid;no_d_id=d_id; 
+        no_w_id=w_id} ->
+          if w_id = wid && d_id = did then Some oid else None
+    | _ -> None)
+  | _ -> None
+
+let get_rem_neword_dist wid did newords_eff = 
+  match newords_eff with
+  | Some x -> 
+    (match x with
+     | New_Order.Remove {no_o_id = oid;no_d_id=d_id; 
+         no_w_id=w_id} ->
+           if w_id = wid && d_id = did then Some oid else None
+     | _ -> None)
+  | _ -> None
+
+let opt_max a b = match a with 
+                  | Some x -> if x > b then x else b 
+                  | _ -> b
+
+let get_oeff_by_distwarehouse wid did oeff = 
+  match oeff with
+  | Some x -> (match x with 
+              | Order.Add {o_id=oid; o_w_id=w_id; o_d_id=d_id} ->
+                 if w_id = wid && d_id = did then Some x else None
+              | _ -> None)
+  | _ -> None
+
+let not_in_list l x = not (List.contains l x)
+
+let get_ol_ids wid did o eff = 
+  match eff with
+  | Some x -> 
+    (match x with
+    | Orderline.Add {ol_o_id= oid1; ol_d_id=did1; ol_w_id=wid1; ol_amt=amt} ->
+      Some oid1
+    | _ -> None)
+  | _ -> None
+
+let delivery_process wid d = 
+  match d with
+  | Some did ->
+    let dummy_oid = -1 in
+    let newords_ctxt = New_Order_table.get dummy_oid New_Order.Get in
+    let opt_add_nords = List.map (get_add_neword_dist wid did) newords_ctxt in
+    let opt_rem_nords = List.map (get_rem_neword_dist wid did) newords_ctxt in
+    let opt_nords = List.filter (not_in_list opt_rem_nords) opt_add_nords in 
+    let nords = List.filter from_just opt_nords in
+    let no = List.fold_right opt_max nords (0-1) in
+    if no = -1 then 
+      None 
+    else
+      let o_effs = Order_table.get dummy_oid Order.Get in
+      let oids = List.map (get_oeff_by_distwarehouse wid did) o_effs in 
+      let o_eff = List.hd (List.filter from_just oids) in
+      let (o, ocid) = (match o_eff with
+              | Some x -> (match x with
+                          | Order.Add {o_id=oid; o_c_id=cid} ->
+                            (oid,cid)
+                          | _ -> raise Inconsistency)
+              | _ -> raise Inconsistency) in
+      let orderline_ctxt = Orderline_table.get o (Orderline.Get) in
+      let ols = List.map (get_ol_ids wid did o) orderline_ctxt in
+      let amts = List.map (get_olamt wid did o) orderline_ctxt in
+      let amt = List.fold_right (+) amts 0 in 
+      let bal = get_customer_bal ocid did wid in
+       Some (did,no,o,ols,amt,ocid,bal)
+  | _ -> None
+
+let delivery_append wid x =
+  match x with  
+  | None -> () 
+  | Some (did,no,o,ols,amt,c, c_bal) -> 
+    let dummy_oid = -1 in
+    begin
+      New_Order_table.append no (New_Order.Remove{no_w_id = wid;
+                                 no_o_id=o;no_d_id = did});
+      Order_table.append dummy_oid (Order.SetCarrier {o_id=o;o_carrier_id=0});
+      List.iter (fun ol -> 
+        match ol with
+        | Some olx ->
+          Orderline_table.append olx (Orderline.SetDeliveryDate{ol_o_id=olx;
+          ol_delivery_d=0})
+        | _ -> ()) ols;
+      Customer_table.append c (Customer.SetBal{c_id=c;ts=0;
+                               c_bal=c_bal+amt; c_d_id=did;c_w_id=wid})
+    end
+
  (*
  * Delivery transaction.
  *)
-let delivery_txn dummy_id_DistrictCreate wid =
-  (*let dists = L.filter (fun d -> d.d_w_id = wid) db.districts in*)
+let do_delivery_txn dummy_id_DistrictCreate wid =
   let ctxt = DistrictCreate_table.get dummy_id_DistrictCreate DistrictCreate.Get in
-  let dists = List.map (fun eff -> match eff with
-                                   | DistrictCreate.Add {d_id=id; w_id=id1} -> 
-                                     if id1=wid then Some id else None
-                                   | _ -> None) ctxt in
-  let oldest_nords = 
-    List.map (fun d -> 
-             match d with
-             | Some did ->
-               let nords = L.filter 
-                             (fun no -> no.no_w_id = wid && 
-                                        no.no_d_id = did) 
-                             db.new_orders in
-                 (* sort new_orders in increasing order *)
-                 match L.sort (fun no1 no2 -> no1.no_o_id - no2.no_o_id) 
-                         nords with 
-                   | [] -> (d.d_id, None) 
-                   | no::_ -> 
-                       let o = find_order (w_id, d.d_id, no.no_o_id) in
-                       let ols = L.filter 
-                                   (fun ol -> ol.ol_w_id = o.o_w_id && 
-                                              ol.ol_d_id = o.o_d_id && 
-                                              ol.ol_o_id = o.o_id)
-                                   db.order_lines in
-                       let amt = L.sum @@ L.map (fun ol -> ol.ol_amt) ols in
-                       let c = find_customer (w_id, d.d_id, o.o_c_id) in
-                        (d.d_id, Some (no,o,ols,amt,c)
-             | _ -> )) dists in
-    List.iter 
-      (function (d_id, None) -> () 
-         | (d_id, Some (no,o,ols,amt,c)) -> 
-              begin
-                db.new_orders <- 
-                  L.delete (fun no' -> no'.no_w_id = no.no_w_id && 
-                                       no'.no_d_id = no.no_d_id) 
-                    db.new_orders;
-                o.o_carrier_id <- Some ();
-                List.iter (fun ol -> 
-                  ol.ol_delivery_d <- Some (U.gmtime @@ U.time ())) ols;
-                c.c_bal <- c.c_bal + amt;
-                c.c_delivery_cnt <- c.c_delivery_cnt + 1;
-              end) 
-      oldest_nords
+  let dists = List.map (get_did_by_distwarehouse wid) ctxt in
+  let oldest_nords = List.map (delivery_process wid) dists in
+  List.iter (delivery_append wid) oldest_nords
 
  let inv_new_order_txn oid did wid =
    (* D_NEXT_O_ID - 1 = max(O_ID) *)
@@ -694,20 +785,19 @@ let delivery_txn dummy_id_DistrictCreate wid =
     let v2 = List.fold_right (get_ol_rows_cnt did wid) orderline_ctxt 0 in
     v1=v2)
 
+ let get_district_ytd_invargs wid did = 
+   match did with
+   | Some x -> get_district_ytd x wid
+   | _ -> 0
+
  let inv_payment_txn dummy_id_DistrictCreate dummy_id_History oid did wid cid =
   let history_ctxt = History_table.get dummy_id_History (History.Get) in
 
   (* W_YTD = sum(D_YTD) *)
   ( let ctxt = DistrictCreate_table.get dummy_id_DistrictCreate DistrictCreate.Get in
-    let district_ids = List.map (fun eff -> match eff with
-                                          | Some x -> (match x with 
-                                                      | DistrictCreate.DistrictAdd {id=id1} -> Some id1
-                                                      | _ -> None)
-                                          | _ -> None) ctxt in
-    let district_ytds = List.map (fun id -> match id with
-                                           | Some x -> get_district_ytd x wid 
-                                           | _ -> 0) district_ids in
-    let v1 = List.fold_right (fun ytd acc -> ytd+acc) district_ytds 0 in
+    let district_ids = List.map (get_did_by_distwarehouse wid) ctxt in
+    let district_ytds = List.map (get_district_ytd_invargs wid) district_ids in
+    let v1 = List.fold_right (+) district_ytds 0 in
     let v2 = get_warehouse_ytd wid in
   v1=v2) &&
 
@@ -739,36 +829,3 @@ let delivery_txn dummy_id_DistrictCreate wid =
    let v2 = cust_bal in
    let v3 = orderline_amt in 
     v3 = (v1+v2))
-
-(*
-(*
- * Order Status transaction.
- *)
-let order_status_txn c_w_id c_d_id c_id = 
-  let c = find_customer (c_w_id,c_d_id,c_id) in
-  let ords = L.filter (fun o -> o.o_w_id = c_w_id && 
-                                o.o_d_id = c_d_id && 
-                                o.o_c_id = c_id) db.orders in
-  (* sort ords in decreasing order *)
-  let o = L.hd @@ L.sort (fun o1 o2 -> o2.o_id - o1.o_id) ords in
-  let ols = L.filter (fun ol -> ol.ol_w_id = o.o_w_id && 
-                                ol.ol_d_id = o.o_d_id && 
-                                ol.ol_o_id = o.o_id) db.order_lines in
-  let o_info = L.map (fun (ol:order_line) -> 
-                        (ol.ol_qty, ol.ol_delivery_d)) ols in
-    (c.c_bal,o_info)
-
-(*
- * Stock-level transaction.
- *)
-let stock_level_txn Warehouse.id d_w_id d_id thres = 
-  let dist = find_dist (d_w_id,d_id) in
-  let next_o_id = dist.d_next_o_id in
-  let ols = L.filter (fun ol -> ol.ol_w_id = Warehouse.id && 
-                                ol.ol_d_id = d_id && 
-                                ol.ol_o_id < next_o_id && 
-                                ol.ol_o_id >= next_o_id - 20) 
-              db.order_lines in
-  let stks = L.map (fun ol -> (ol.ol_i_id,find_stk (w_id,ol.ol_i_id))) 
-               ols in
-    stks*)
