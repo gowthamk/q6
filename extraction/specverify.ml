@@ -891,7 +891,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 30 (* k'*) in
+  let _ = k := 10 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -902,7 +902,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let oper_cons = extract_oper_cons schemas in
   (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
   (*let txn_list = ["do_bid_for_item"; "do_withdraw_wallet"] in*)
-  let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in
+  let txn_list = ["do_new_tweet"] in
+  (*let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in*)
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
   let ssn2 = fresh_ssn () in
   let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in

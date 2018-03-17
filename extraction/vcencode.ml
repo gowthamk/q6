@@ -678,9 +678,7 @@ let assert_tpcc_contracts () =
   let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
     _assert_all asns
 
-<<<<<<< HEAD
-
-let assert_contracts () = assert_shcart_contracts ()
+let assert_contracts () = assert_mb_contracts ()
 
 (*
 let assert_contracts () = ()
