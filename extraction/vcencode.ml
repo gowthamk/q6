@@ -126,6 +126,7 @@ let ar_oper (op1,op2) = mk_app (fun_of_str "ar_oper") [op1; op2]
 let sameobj (e1,e2) = mk_app (fun_of_str "sameobj") [e1; e2]
 let objtyp e = mk_app (fun_of_str "objtyp") [e]
 let objid e = mk_app (fun_of_str "objid") [e]
+let replid e = mk_app (fun_of_str "replid") [e]
 let ssn e = mk_app (fun_of_str "ssn") [e]
 let txn e = mk_app (fun_of_str "txn") [e]
 let currtxn e = mk_app (fun_of_str "currtxn") [e]
@@ -455,6 +456,10 @@ let assert_vis_axioms () =
   (* vis is anti-symmetric *)
   let vis_antisym = forallE2 
                     (fun a b -> (vis(a,b) @& vis(b,a)) @=> a @=b) in
+  (* replica-local vis is a total-order *)
+  let repl_local_vis_total = forallE2 
+      (fun a b -> (replid(a) @= replid(b)) 
+                      @=> mk_or [vis(a,b); vis(b,a); a @= b]) in
   let vis_axioms = List.map expr_of_quantifier @@
                    [sameobj_def; vis_sameobj; 
                     vis_irrefl; vis_antisym] in
@@ -614,10 +619,10 @@ let assert_tpcc_contracts () =
   let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
     _assert_all asns
 
-let assert_contracts () = ()
 (*
-let assert_contracts () = assert_mb_contracts ()
+let assert_contracts () = ()
    *)
+let assert_contracts () = assert_mb_contracts ()
 (*
  * Encoding
  *)
