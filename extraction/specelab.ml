@@ -86,6 +86,10 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
     KE.add (Ident.create "ObjType") (Kind.Enum table_names) ke in
   (* 2. Id typedef to KE *)
   let add_Id ke = KE.add (Ident.create "Id") Kind.Uninterpreted ke in
+  (* 2.5 ReplId typedef to KE. Hardcoding to 3 replicas currently. *)
+  let add_ReplId ke = 
+    let repls = List.map Ident.create ["R1"; "R2"; "R3"] in
+      KE.add (Ident.create "ReplId") (Kind.Enum repls) ke in
   (* 3. Oper typedef to KE *)
   let aliased_oper_cons = extract_oper_cons schemas in
   let (_,oper_cons) = List.split aliased_oper_cons in
@@ -193,6 +197,10 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_oper te = 
     let typ = Type.Arrow (Type.eff,Type.oper) in
       TE.add (L.oper) typ te in
+  (* 15.5. replid function to TE *)
+  let add_replid te = 
+    let typ = Type.Arrow (Type.eff,Type.replid) in
+      TE.add (L.replid) typ te in
   (* 16. vis, so, hb, sameobj, and ar* relations to TE *)
   let add_rels te = 
     let typ = Type.Arrow (Type.eff,Type.Arrow (Type.eff, Type.Bool)) in
@@ -225,13 +233,13 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_ssn_nop te = TE.add L.ssn_nop Type.ssn te in
   (* bootstrap KE *)
   let ke = List.fold_left (fun ke f -> f ke) KE.empty
-      [add_ObjType; add_Id; add_Id_aliases; add_Oper; add_UUID;
-       add_Txn; add_Ssn] in
+      [add_ObjType; add_Id; add_Id_aliases; add_ReplId; 
+       add_Oper; add_UUID; add_Txn; add_Ssn] in
   (* bootstrap TE *)
   let te = List.fold_left (fun te f -> f te) TE.empty
       [(*add_Oper_recognizers;*) add_Eff_accessors; add_mkkeys; 
        (* add_mkkey_int; *)add_ssn; add_ssn_nop; add_txn; 
-       add_seqno; add_currtxn; add_objid; 
+       add_seqno; add_currtxn; add_objid; add_replid;
        add_objtyp; add_oper; add_rels; add_hbid; add_show] in
   (* bootstrap VE *)
   let ve = List.fold_left (fun ve f -> f ve) VE.empty

@@ -891,7 +891,7 @@ let extract_oper_cons (schemas) : S.t list =
   all_cons 
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-let _ = k := 30 (* k'*) in
+  let _ = k := 30 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -937,10 +937,10 @@ let _ = k := 30 (* k'*) in
                           (env2', vcs@vcs2')) (env1, []) nm_ssn_list in
   let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
   (* Printing program preds *)
-  let _ = printf "--- Txn Preds ----\n" in
+  (*let _ = printf "--- Txn Preds ----\n" in
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
-            List.concat wr_prog_list in
+            List.concat wr_prog_list in*)
   let tmp_name2 = "inv_fun" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name2)
@@ -962,10 +962,10 @@ let _ = k := 30 (* k'*) in
   let (_, env2'(*{ke,effs} used*), vcs2) = doIt_inv env2 my_fun2 in
   let [(te2,inv_prog,inv)] = vcs2 in
   (* Printing invariant program preds *)
-  let _ = printf "--- Inv Fn Preds ----\n" in
+  (*let _ = printf "--- Inv Fn Preds ----\n" in
   let _ = List.iteri 
             (fun i p -> printf "%d.\n" i; P.print p) 
-            inv_prog in
+            inv_prog in*)
   let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
   (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
     match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
@@ -1005,8 +1005,8 @@ let _ = k := 30 (* k'*) in
       is_pre := true;
       P.ground inv
     end in
-  let _ = printf "--- Precondition ----\n" in
-  let _ = P.print pre in
+  (*let _ = printf "--- Precondition ----\n" in
+  let _ = P.print pre in*)
   let prog = 
     begin
       is_pre := false;
@@ -1022,8 +1022,8 @@ let _ = k := 30 (* k'*) in
       is_pre := false;
       P.ground inv
     end in
-  let _ = printf "--- Postcondition ----\n" in
-  let _ = P.print post in
+  (*let _ = printf "--- Postcondition ----\n" in
+  let _ = P.print post in*)
   let new_te_list = List.map (fun te1 -> 
                       TE.fold_name 
                          (fun id ty te -> 

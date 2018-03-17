@@ -29,6 +29,7 @@ struct
   let other s = Other (Ident.create s)
   let oper = other "Oper"
   let id = other "Id"
+  let replid = other "ReplId"
   let uuid = other "UUID"
   let eff = other "Eff"
   let ssn = other "Ssn"
@@ -41,7 +42,8 @@ struct
   let _of str = match str with
     |"Oper" -> oper | "id" -> id | "Eff" -> eff | "Ssn" -> ssn
     | "UUID" -> uuid | "ObjType" -> objtyp | "unit" -> Unit
-    | "Txn" -> txn | _ -> failwith "Type._of: Unexpected"
+    | "Txn" -> txn | "ReplId" -> replid 
+    | _ -> failwith "Type._of: Unexpected"
 end
 
 module Cons = 
@@ -86,6 +88,7 @@ module KE : (LIGHT_ENV with type elem = Kind.t) =
 module L = 
 struct
   let objid = Ident.create "objid"
+  let replid = Ident.create "replid"
   let objtyp = Ident.create "objtyp"
   let oper = Ident.create "oper"
   let vis = Ident.create "vis"
