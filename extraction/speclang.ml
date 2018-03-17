@@ -188,6 +188,7 @@ and SymbolicVal : sig
   val none : t
   val some : t -> t
   val app : Ident.t * t list -> t
+  val empty_indent : < get : unit -> string; inc : unit -> 'a > as 'a
 end = struct
   type t = Bot
     | Var of Ident.t
@@ -248,6 +249,12 @@ end = struct
         | NewEff (Cons.T {name},Some sv) -> (Ident.name name)^(g sv)
         | DelayedITE (x,v1,v2) -> "DelayedITE ("^(string_of_bool !x)
               ^","^(to_string v1)^","^(to_string v2)^")"
+
+  let empty_indent = object 
+    val ind = ""
+    method inc () = {<ind = ind^"  ">}
+    method get () = ind
+  end
         
   let rec print ind x : unit =
     let f = to_string in

@@ -528,11 +528,15 @@ let assert_ba_contracts () =
 
 let assert_rubis_contracts () =
   let do_withdraw = const_of_name "do_withdraw_wallet" in
-  (*let do_txn = const_of_name "do_txn" in*)
   let wd = const_of_name "Wallet_WithdrawFromWallet" in
   let dp = const_of_name "Wallet_DepositToWallet" in
   let gb = const_of_name "Wallet_GetBalance" in
   let amt = fun_of_str "amt" in
+  let gt = const_of_name "Bids_GetBid" in
+  let f' a b c d = 
+    mk_and [oper(d) @= gt; so(a,b); 
+            vis(a,c); so(c,d); 
+            sameobj(a,c);sameobj(b,d)] @=> vis(a,d) in
   (* Every withdraw is visible to getbalance. *)
   let f a b =
     mk_and [oper(a) @= wd; 
@@ -555,8 +559,61 @@ let assert_rubis_contracts () =
             currtxn(b)] @=> vis(a, b) in
   let asns = List.map expr_of_quantifier [forallE2 f; 
                                           forallE4 g; 
+                                          forallE4 f';
                                           forallE1 h;
                                           forallE2 i] in
+    _assert_all asns
+
+let assert_shcart_contracts () = 
+  let rm = const_of_name "do_removeItemsFromCart" in
+  let add = const_of_name "do_addItemsToCart" in
+  let cart_add = const_of_name "Cart_AddItemsToCart" in
+  let cart_rm = const_of_name "Cart_RemoveItemsFromCart" in
+  let item_add = const_of_name "Item_AddToStock" in
+  let item_rm = const_of_name "Item_RemoveFromStock" in
+  let item_sh = const_of_name "Item_ShowItem" in
+  let cart_sm = const_of_name "Cart_GetCartSummary" in
+  let qty = fun_of_str "qty" in
+  let f1 a b =
+    mk_and [oper(a) @= cart_rm; 
+            oper(b) @= cart_sm; 
+            txn(b) @= rm; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let f2 a b =
+    mk_and [oper(a) @= item_rm; 
+            oper(b) @= item_sh; 
+            txn(b) @= add; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let g1 a b c d =
+    mk_and [oper(a) @= item_add; oper(b) @= item_sh; 
+            oper(c) @= item_rm; so(b,c);
+            txn(b) @= add; 
+            sametxn(b,c); 
+            oper(d) @= item_sh; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  let g2 a b c d =
+    mk_and [oper(a) @= cart_add; oper(b) @= cart_sm; 
+            oper(c) @= cart_rm; so(b,c);
+            txn(b) @= rm; 
+            sametxn(b,c); 
+            oper(d) @= cart_sm; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  let h a = (mk_app qty [a]) @>= (mk_numeral_i 0) in
+  let i1 a b =
+    mk_and [oper(a) @= item_rm;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let i2 a b =
+    mk_and [oper(a) @= cart_rm;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let asns = List.map expr_of_quantifier [forallE2 f1;
+                                          forallE2 f2; 
+                                          forallE4 g1; 
+                                          forallE4 g2;
+                                          forallE1 h;
+                                          forallE2 i1;
+                                          forallE2 i2] in
     _assert_all asns
 
 let assert_tpcc_contracts () = 
@@ -617,7 +674,7 @@ let assert_tpcc_contracts () =
     _assert_all asns
 
 
-let assert_contracts () = ()
+let assert_contracts () = assert_shcart_contracts ()
 (*
 let assert_contracts () = assert_mb_contracts ()
    *)
@@ -691,7 +748,6 @@ let assert_neg_const name =
 let discharge (txn_id, vc) = 
   let open VC in
   let vc_name = "VC_"^(Ident.name txn_id)(*fresh_vc_name ()*) in
-  let _ = Printf.printf "Here\n" in
   let out_chan = open_out @@ vc_name^".z3" in
     begin
       declare_types (vc.kbinds, vc.tbinds);
@@ -717,7 +773,6 @@ let doIt vcs =
     failwith "Log couldn't be opened."
   else
     let _ = List.map (fun vc ->
-      let _ = Printf.printf ">>\n" in
       let res = discharge vc in
       let _ = reset () in
       begin
