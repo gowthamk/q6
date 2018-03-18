@@ -533,11 +533,15 @@ let assert_ba_contracts () =
 
 let assert_rubis_contracts () =
   let do_withdraw = const_of_name "do_withdraw_wallet" in
-  (*let do_txn = const_of_name "do_txn" in*)
   let wd = const_of_name "Wallet_WithdrawFromWallet" in
   let dp = const_of_name "Wallet_DepositToWallet" in
   let gb = const_of_name "Wallet_GetBalance" in
   let amt = fun_of_str "amt" in
+  let gt = const_of_name "Bids_GetBid" in
+  let f' a b c d = 
+    mk_and [oper(d) @= gt; so(a,b); 
+            vis(a,c); so(c,d); 
+            sameobj(a,c);sameobj(b,d)] @=> vis(a,d) in
   (* Every withdraw is visible to getbalance. *)
   let f a b =
     mk_and [oper(a) @= wd; 
@@ -560,8 +564,61 @@ let assert_rubis_contracts () =
             currtxn(b)] @=> vis(a, b) in
   let asns = List.map expr_of_quantifier [forallE2 f; 
                                           forallE4 g; 
+                                          forallE4 f';
                                           forallE1 h;
                                           forallE2 i] in
+    _assert_all asns
+
+let assert_shcart_contracts () = 
+  let rm = const_of_name "do_removeItemsFromCart" in
+  let add = const_of_name "do_addItemsToCart" in
+  let cart_add = const_of_name "Cart_AddItemsToCart" in
+  let cart_rm = const_of_name "Cart_RemoveItemsFromCart" in
+  let item_add = const_of_name "Item_AddToStock" in
+  let item_rm = const_of_name "Item_RemoveFromStock" in
+  let item_sh = const_of_name "Item_ShowItem" in
+  let cart_sm = const_of_name "Cart_GetCartSummary" in
+  let qty = fun_of_str "qty" in
+  let f1 a b =
+    mk_and [oper(a) @= cart_rm; 
+            oper(b) @= cart_sm; 
+            txn(b) @= rm; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let f2 a b =
+    mk_and [oper(a) @= item_rm; 
+            oper(b) @= item_sh; 
+            txn(b) @= add; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let g1 a b c d =
+    mk_and [oper(a) @= item_add; oper(b) @= item_sh; 
+            oper(c) @= item_rm; so(b,c);
+            txn(b) @= add; 
+            sametxn(b,c); 
+            oper(d) @= item_sh; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  let g2 a b c d =
+    mk_and [oper(a) @= cart_add; oper(b) @= cart_sm; 
+            oper(c) @= cart_rm; so(b,c);
+            txn(b) @= rm; 
+            sametxn(b,c); 
+            oper(d) @= cart_sm; 
+            vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
+  let h a = (mk_app qty [a]) @>= (mk_numeral_i 0) in
+  let i1 a b =
+    mk_and [oper(a) @= item_rm;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let i2 a b =
+    mk_and [oper(a) @= cart_rm;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let asns = List.map expr_of_quantifier [forallE2 f1;
+                                          forallE2 f2; 
+                                          forallE4 g1; 
+                                          forallE4 g2;
+                                          forallE1 h;
+                                          forallE2 i1;
+                                          forallE2 i2] in
     _assert_all asns
 
 let assert_tpcc_contracts () = 
@@ -569,8 +626,10 @@ let assert_tpcc_contracts () =
   let ptxn = const_of_name "do_payment_txn" in
   let dget = const_of_name "District_Get" in
   let oget = const_of_name "Order_Get" in
+  let olget = const_of_name "Orderline_Get" in
   let dsetnoid = const_of_name "District_SetNextOID" in
   let oadd = const_of_name "Order_Add" in
+  let oladd = const_of_name "Orderline_Add" in
   let wsetytd = const_of_name "Warehouse_SetYTD" in
   let dsetytd = const_of_name "District_SetYTD" in
   let dgetytd = const_of_name "District_GetYTD" in
@@ -578,11 +637,11 @@ let assert_tpcc_contracts () =
   let hget = const_of_name "History_Get" in
   let hadd = const_of_name "History_Append" in
   let f a b c d =
-    mk_and [oper(a) @= dsetnoid;
+    mk_and [(*oper(a) @= dsetnoid;*)
             txn(a) @= nwordtxn;
-            oper(b) @= dget;
+            (*oper(b) @= dget;
             oper(c) @= oadd;
-            oper(d) @= oget;
+            oper(d) @= oget;*)
             vis(a, b);
             so(a, c);
             so(b, d);
@@ -590,10 +649,10 @@ let assert_tpcc_contracts () =
             sameobj(c, d);
             sametxn(a,c)] @=> vis(c,d) in
   let g a b c d = 
-    mk_and [oper(a) @= dsetytd;
+    mk_and [(*oper(a) @= dsetytd;
             oper(b) @= wsetytd;
             oper(c) @= dgetytd;
-            oper(d) @= wgetytd;
+            oper(d) @= wgetytd;*)
             txn(a) @= ptxn;
             sametxn(a,b);
             so(b, a);
@@ -602,7 +661,7 @@ let assert_tpcc_contracts () =
             sameobj(b, d);
             sametxn(c, d);
             vis(b, d)] @=> vis(a, c) in
-  let h a b c d = 
+  (*let h a b c d = 
     mk_and [oper(a) @= dsetytd;
             oper(b) @= hadd;
             oper(c) @= dgetytd;
@@ -614,15 +673,17 @@ let assert_tpcc_contracts () =
             sameobj(a, c);
             sameobj(b, d);
             sametxn(c, d);
-            vis(a, c)] @=> vis(b, d) in
+            vis(a, c)] @=> vis(b, d) in*)
   (*let g a b = (mk_app ts [a]) @!= (mk_app ts [b]) in*)
-  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g; forallE4 h] in
+  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
     _assert_all asns
+
+let assert_contracts () = assert_mb_contracts ()
 
 (*
 let assert_contracts () = ()
    *)
-let assert_contracts () = assert_mb_contracts ()
+(*let assert_contracts () = assert_mb_contracts ()*)
 (*
  * Encoding
  *)
@@ -692,7 +753,7 @@ let assert_neg_const name =
 
 let discharge (txn_id, vc) = 
   let open VC in
-  let vc_name = "VC"(*fresh_vc_name ()*) in
+  let vc_name = "VC_"^(Ident.name txn_id)(*fresh_vc_name ()*) in
   let out_chan = open_out @@ vc_name^".z3" in
     begin
       declare_types (vc.kbinds, vc.tbinds);
@@ -719,6 +780,7 @@ let doIt vcs =
   else
     let _ = List.map (fun vc ->
       let res = discharge vc in
+      let _ = reset () in
       begin
         (match res with 
           | SATISFIABLE -> printf "SAT\n"

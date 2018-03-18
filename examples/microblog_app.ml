@@ -1,5 +1,5 @@
 open Q6_interface
-open Debug
+(*open Debug*)
 
 module List = 
 struct
