@@ -678,7 +678,47 @@ let assert_tpcc_contracts () =
   let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
     _assert_all asns
 
-let assert_contracts () = assert_mb_contracts ()
+let mk_cc op = 
+  let f a b = mk_and [oper(b)@=op;
+          hb(a, b);
+          sameobj(a, b)] @=> vis(a, b) in
+  forallE2 f
+
+let mk_sc op op_list = 
+  let f a b = 
+      let op_cond = List.map (fun op1 -> oper(a)@=op1) op_list in
+      mk_and [mk_or op_cond;
+        oper(b)@=op;
+        sameobj(a, b)] @=> 
+        vis(a, b) @| vis(b, a) (*@| (a@=b)*) in
+  forallE2 f
+
+(*let assert_paxos_contracts () = 
+  let op1 = const_of_name "Acceptor_Accept" in
+  let op2 = const_of_name "Proposer_Ack" in
+  let op3 = const_of_name "Acceptor_PrepareRequest" in
+  let op4 = const_of_name "Proposer_PrepareResponse" in
+  let op5 = const_of_name "Proposer_GetSummary" in
+  let op6 = const_of_name "Acceptor_SetPromise" in
+  let op7 = const_of_name "Proposer_AcceptRequested" in
+  let op8 = const_of_name "Acceptor_Accepted" in
+  let op9 = const_of_name "Acceptor_GetSummary" in
+  let txn1 = const_of_name "do_proposal_response" in
+  let n  = fun_of_str "n" in
+  let v  = fun_of_str "v" in
+  let prop_id  = fun_of_str "proposal_id" in
+  let h_n a = (mk_app n [a]) @>= (mk_numeral_i 0) in
+  let h_v a = (mk_app v [a]) @>= (mk_numeral_i 0) in
+  let h_prop_id a = (mk_app prop_id [a]) @>= (mk_numeral_i 0) in
+  let h_assertions = List.map forallE1 [h_n; h_v; h_prop_id] in
+  let acc_assertions = mk_sc op9 [op1; op3; op6; op8] in
+  let prop_assertions = 
+  let sc_assertions = List.map mk_sc [(*op1;op2;op3;*)(*op4;op5;op6;op7;op8;*)op9] in
+  let assertions = List.concat [h_assertions; sc_assertions] in
+  let asns = List.map expr_of_quantifier assertions in
+  _assert_all asns*)
+
+let assert_contracts () = assert_shcart_contracts ()
 
 (*
 let assert_contracts () = ()
