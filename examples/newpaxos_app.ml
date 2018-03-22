@@ -43,7 +43,7 @@ struct
   include Store_interface.Make(Learner)
 end
 
-(* ----------- ACTIONS OF PROPOSER ------------*)
+(* ----------------- ACTIONS OF THE PROPOSER ---------------------- *)
 
 (* prepare is sent to prepare nodes for a round led by the current
  * node, It elicits promises from nodes to participate in the round.*)
@@ -83,6 +83,8 @@ let do_check_proposable n r repl_ids =
 
 let do_propose n r v = 
   Proposer_table.append n (Proposer.Propose {round=r; value=v})
+
+(* ----------------- ACTIONS OF THE ACCEPTOR --------------------- *)
 
 (* Returns the highest round in which the node n promised to vote. *)
 let get_highest_promise_by n = 
@@ -154,6 +156,8 @@ let do_check_proposal_acceptable n r =
 let do_accept_proposal n r v = 
   Acceptor_table.append n (Acceptor.Accept {round=r; value=v})
  
+(* ----------------- ACTIONS OF THE LEARNER --------------------- *)
+
 (* The learner learns about all the proposals for which a quorum of
  * nodes have cast their votes.
  *)
