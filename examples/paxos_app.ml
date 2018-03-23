@@ -44,7 +44,7 @@ end
 
 module Acceptor = 
 struct
-  type id = int
+  type id = Uuid.t
   type eff = PrepareRequest of {n:int}
             | SetPromise of {proposal_id: int}
             | Accept of {proposal_id:int; v:int}
@@ -57,9 +57,9 @@ struct
   include Store_interface.Make(Acceptor)
 end
 
-module Learner = 
+(*module Learner = 
 struct
-  type id = int
+  type id = Uuid
   type eff = Accepted of {proposal_id:int; v:int; 
                           acceptor:Acceptor.id}
             | GetSummary
@@ -68,11 +68,11 @@ end
 module Learner_table =
 struct
   include Store_interface.Make(Learner)
-end
+end*)
 
 module Proposer = 
 struct
-  type id = int
+  type id = Uuid.t
   type eff = PrepareResponse of {proposal_id: int; v: int}
              | Ack of {proposal_id: int; acceptor: Acceptor.id;
                prev_accepted_n: int;prev_accepted_v: int}
@@ -162,7 +162,7 @@ let prev_not_accepted_case n1 a_id (p_id:Proposer.id) =
                                acceptor=a_id});
   Acceptor_table.append a_id (Acceptor.SetPromise{proposal_id=n1})
 
-let do_response acceptor_effs n1 a_id p_id =
+let response acceptor_effs n1 a_id p_id =
   begin
     let prev_accepted = List.map get_accepted acceptor_effs in
     let max_prev_accepted = max_ts prev_accepted in
@@ -177,13 +177,27 @@ let do_response acceptor_effs n1 a_id p_id =
 
 let gt x y = x > y
 
+let rec check_prepare n' effs = 
+  match effs with
+  | [] -> false
+  | eff::rest -> 
+    let t = check_prepare n' rest in
+    (match eff with
+     | Some x -> (match x with
+                 | Acceptor.PrepareRequest{n=n1} -> 
+                   if n'=n1 then true else t
+                 | _ -> t)
+     | _ -> t) 
+
 let do_proposal_response n1 a_id p_id = 
-  let acceptor_effs = Acceptor_table.get a_id (Acceptor.GetSummary) in
+ let acceptor_effs = Acceptor_table.get a_id (Acceptor.GetSummary) in
+ if check_prepare n1 acceptor_effs then
   let prev_promises = List.map get_promise acceptor_effs in
   let max_prev_promise = max_ts prev_promises in
-  if gt n1 max_prev_promise then 
-    do_response acceptor_effs n1 a_id p_id 
+  if n1 > max_prev_promise then 
+    response acceptor_effs n1 a_id p_id 
   else ()
+ else ()
 
 let cnt_vote n eff acc = 
  match eff with
@@ -210,13 +224,14 @@ let get_acceptor n' eff =
   | Some x -> 
       (match x with
       | Proposer.Ack{proposal_id=max_n;acceptor=a_id} -> 
-        if max_n=n' then a_id else (0-1)
-      | _ -> (0-1))
-  | _ -> (0-1)
+        if max_n=n' then Some a_id else None
+      | _ -> None)
+  | _ -> None
 
-let send_accept v_max v' n' p_id a_id =
-  if a_id > -1 then 
-  (if v_max > -1 then
+let send_accept v_max v' n' p_id aid =
+  match aid with 
+  | Some a_id ->
+  if v_max > -1 then
    begin
      Acceptor_table.append a_id (Acceptor.Accept{proposal_id=n'; v=v_max});
      Proposer_table.append p_id (Proposer.AcceptRequested{proposal_id=n'; 
@@ -227,14 +242,14 @@ let send_accept v_max v' n' p_id a_id =
     Acceptor_table.append a_id (Acceptor.Accept{proposal_id=n'; v=v'});
     Proposer_table.append p_id (Proposer.AcceptRequested{proposal_id=n'; 
                                             v=v'})
-   end)
-  else ()
+   end
+  | _ -> ()
 
 (*Paxos Phase-2 proposer responds to promise message*)
 
 let do_promise_response n' v' p_id =
   let prep_response_effs = Proposer_table.get p_id (Proposer.GetSummary) in
-  if gt (cnt_votes prep_response_effs n') 1 then
+  if (cnt_votes prep_response_effs n') > 1 then
     (let v_list = List.map (get_v n') prep_response_effs in
     let v_max = max_ts v_list in
     let acceptors = List.map (get_acceptor n') prep_response_effs in
@@ -265,17 +280,17 @@ let get_n_from_prepare eff =
 
 let do_accept n' v' a_id =
   let acceptor_effs = Acceptor_table.get a_id (Acceptor.GetSummary) in
-  (*if check_accept n' v' acceptor_effs then*)
-  let curr_proposals = List.map get_n_from_prepare acceptor_effs in
-  let max_n = max_ts curr_proposals in
-  if gt max_n n' then
-  begin
-    Acceptor_table.append a_id (Acceptor.Accepted{proposal_id=n';v=v'});
-    Learner_table.append (0-1) (Learner.Accepted{proposal_id=n';v=v';
-                                acceptor=a_id})
-  end
+  if check_accept n' v' acceptor_effs then
+    (let curr_proposals = List.map get_n_from_prepare acceptor_effs in
+    let max_n = max_ts curr_proposals in
+    if n' > max_n then
+    begin
+      Acceptor_table.append a_id (Acceptor.Accepted{proposal_id=n';v=v'});
+      (*Learner_table.append (0-1) (Learner.Accepted{proposal_id=n';v=v';
+                                  acceptor=a_id})*)
+    end 
+    else ())
   else ()
-   (*else ()*)
 
 let get_n_from_ack eff = 
  match eff with
@@ -301,10 +316,10 @@ let inv_fun1 n1 a_id =
   let prev_promises = List.map get_promise acceptor_effs in
   let n' = max_ts prev_promises in
   if List.exists acceptor_effs (check_accepted_n n1) then
-    gt n1 n'
+    n1 >= n'
   else true
 
-let rec check_accept_issued n v' effs = 
+(*let rec check_accept_issued n v' effs = 
   match effs with
   | [] -> false
   | eff::rest -> 
@@ -373,4 +388,4 @@ let inv_fun2 n' v' p_id =
   <=> *)
     let b = gt cnt_acceptors_acc_lt_n_v_is_max 1 in
     a||b)
-  else true
+  else true*)

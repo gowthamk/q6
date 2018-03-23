@@ -121,8 +121,8 @@ let check_inv cartID eff =
   match eff with
   | Some x -> (match x with
               | Cart.AddItemsToCart{item=itemID} -> 
-                  get_item_cnts cartID itemID >= 0 (*&&
-                  get_item_stks itemID >= 0*)
+                  get_item_cnts cartID itemID >= 0 &&
+                  get_item_stks itemID >= 0
               | _ -> true)
   | _ -> true
 
