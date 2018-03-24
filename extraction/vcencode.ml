@@ -718,7 +718,7 @@ let mk_sc op op_list =
   let asns = List.map expr_of_quantifier assertions in
   _assert_all asns*)
 
-let assert_contracts () = assert_shcart_contracts ()
+let assert_contracts () = (*assert_shcart_contracts*) ()
 
 (*
 let assert_contracts () = ()
@@ -743,6 +743,7 @@ let rec doIt_sv sv =
       | App (id,[v1;v2]) when (Ident.name id = "<=") -> (f v1) @<= (f v2)
       | App (id,[v1;v2]) when (Ident.name id = ">") -> (f v1) @> (f v2)
       | App (id,[v1;v2]) when (Ident.name id = ">=") -> (f v1) @>= (f v2)
+      | App (id,[v1]) when (Ident.name id = "not") -> mk_not (f v1)
       | App (id,svs) -> mk_app (fun_of_str @@ Ident.name id)
                           (List.map f svs) 
       | Eq (v1,v2) -> (f v1) @= (f v2)

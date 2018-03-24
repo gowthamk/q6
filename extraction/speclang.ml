@@ -111,6 +111,7 @@ struct
   let mkkey = function "string" -> mkkey_string
     | "UUID" -> mkkey_UUID
     | "int" -> mkkey_int
+    | "ReplId" -> mkkey_UUID
     | _ -> failwith "mkkey not available"
   let isSome = Ident.create "isSome"
   let isNone = Ident.create "isNone"
@@ -725,7 +726,10 @@ struct
             let _ = Format.fprintf strf "\n" in
             let _ = List.map (fun tye2 -> Printtyp.raw_type_expr strf tye2) tyes2 in
             Printf.printf "%s\n" @@ Format.flush_str_formatter ();*)
-            let _ = assrt (Path.same path1 path2) in
+            (*let path_str1 = Printtyp.string_of_path path1 in
+            let path_str2 = Printtyp.string_of_path path2 in
+            let _ = Printf.printf "%s\n%s\n" path_str1 path_str2 in*)
+            (*let _ = assrt (Path.same path1 path2) in*)
               doIt_list tyes1 tyes2
         | (Tlink tye1,_) -> unify_tyes binds tye1 tye2
         | (_, Tlink tye2) -> unify_tyes binds tye1 tye2

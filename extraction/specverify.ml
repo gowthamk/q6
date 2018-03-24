@@ -36,6 +36,7 @@ let pervasives = [("Pervasives.@@", "@@"); ("Pervasives.=", "=");
                   ("Pervasives.raise", "raise"); 
                   ("Uuid.create", "Uuid.create");
                   ("Pervasives.&&", "&&"); 
+                  ("Pervasives.not", "not");
                   ("Pervasives.||", "||"); 
                   ("Pervasives.+", "+"); 
                   ("Pervasives.*", "*"); 
@@ -70,6 +71,9 @@ let printf = Printf.printf
  *)
 let k =ref 2 (* will be overridden in doIt *)
 let eff_consts = ref [] (* will be overridden in doIt *)
+let oper_consts = ref [] (* will be overridden in doIt *)
+let objtype_consts = ref [] (* will be overridden in doIt *)
+let repl_svs = ref [] (* will be overridden in doIt *)
 
 let not_found msg = (Printf.printf "%s\n" msg; raise Not_found)
 
@@ -195,8 +199,6 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let mkkey_ty1 = L.mkkey (Type.to_string ty1) in
   let phi_1 = S.Eq (S.App (L.objid, [sv_y]),
                      S.App (mkkey_ty1, [sv1])) in
-  (* let phi_2 = S.App (cons_t.recognizer,[S.App (L.oper, [sv_y])]) in *)
-
   let phi_2 = S.Eq (S.App (L.oper, [sv_y]), 
                     S.Var (cons_t.name)) in
   let objtyp = Ident.create @@ 
@@ -238,6 +240,56 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   (* let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in*)
     (y,ps)
 
+let mk_new_effect_get_all env =
+  let y = Ident.create @@ fresh_eff_name () in
+  let sv_y = S.Var y in
+  (*let (Cons.T cons_t,args) = let open S in match sv2 with 
+    | NewEff (cons_t,Some (Record args)) -> (cons_t,args)
+    | NewEff (cons_t,None) -> (cons_t,[])
+    | _ -> failwith "doIt_append: unexpected sv2" in*)
+  let args = [] in
+  let mkkey_ty1 = L.mkkey (Type.to_string Type.replid) in
+  let opers = !oper_consts in   
+  let phi_1 = S.Or (List.map (fun sv1 -> S.Eq (S.App (L.objid, [sv_y]),
+                     S.App (mkkey_ty1, [sv1]))) !repl_svs) in
+  let phi_2 = S.Or (List.map (fun oper -> S.Eq (S.App (L.oper, [sv_y]), 
+                    oper)) opers) in
+  let objtyp_names = !objtype_consts in
+  let objtyps = List.map (fun objtyp -> Ident.create objtyp) objtyp_names in
+  let phi_3 = S.Or (List.map (fun objtyp -> S.Eq (S.App (L.objtyp, [sv_y]), 
+                     S.Var objtyp)) objtyps) in
+  let doIt_arg (arg_id,arg_sv) = S.Eq (S.App (arg_id, [sv_y]), 
+                                        arg_sv) in
+  let phis_4 = List.map doIt_arg args in
+  let phi_5 = S.Eq (S.App (L.txn, [sv_y]), 
+                     S.Var env.txn) in
+  let phi_6 = S.Eq (S.App (L.ssn, [sv_y]), 
+                     S.Var env.ssn) in
+  let phi_7 = S.Eq (S.App (L.seqno, [sv_y]), 
+                     S.ConstInt env.seqno) in
+  let is_currtxn = not env.is_inv in
+  let phi_8 = S.Eq (S.App (L.currtxn, [sv_y]), 
+                     S.ConstBool is_currtxn) in
+  (* For the new effect, phi_1 to phi_8 are true only under 
+  * the current branch *)
+  let tcond = P.of_svs env.path in
+  let tconj = P.of_sv @@ S.And 
+                ([phi_1; phi_2; phi_3] @ (*phis_4 @*) 
+                     [phi_5; phi_6; phi_7; phi_8]) in
+  let tcondp = P._if (tcond, tconj) in
+  let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
+                     S.Var (Cons.name Cons.nop))  in
+  let phi_3' = S.Eq (S.App (L.txn, [sv_y]), 
+                     S.Var L.txn_nop) in
+  let phi_4' = S.Eq (S.App (L.ssn, [sv_y]), 
+                     S.Var L.ssn_nop) in
+  (* phi_2' and phi_3' are true anywhere outside the current branch *)
+  let fcond = P.of_sv @@ S.Not (S.And env.path) in
+  let fcondp = P._if (fcond, P.of_sv @@ S.And [phi_2'; phi_3'; phi_4']) in
+  let ps = [tcondp; fcondp(*; uncondp*)] in
+  (* let _ = Printf.printf "New pred:\n%s\n" (P.to_string conj) in*)
+    (y,ps)
+
 let doIt_append env typed_sv1 sv2 =
   let (y,ps) = mk_new_effect env typed_sv1 sv2 in
   let te' = TE.add y Type.eff env.te in
@@ -248,6 +300,33 @@ let doIt_append env typed_sv1 sv2 =
 
 let doIt_get env typed_sv1 sv2 = 
   let (y,y_ps) = mk_new_effect env typed_sv1 sv2 in
+  let vis (id1,id2) = S.App (L.vis, [S.Var id1;
+                                     S.Var id2]) in
+  let grded_eff (id1,id2) = 
+      S.ite (S.And [vis (id1,id2); (env.show id1)], 
+             S.Option (Some (S.Var id1)), 
+             S.Option None) in
+  (*
+   * E.g: [vis(E0,!e0)? Some E0 : None; vis(E1,!e0)? Some E1 : None]
+   *)
+  let ys = List.map (fun eff -> grded_eff (eff,y)) !eff_consts in
+  (* Since vis(a,b) => samobj(a,b) => objid(a) = objid(b), we 
+   * don't have to assert it separately. *)
+  (* 
+   * ys is the manifest prefix. We also need to create a list 
+   * variable to serve as the unmanifest suffix.
+   *)
+  let l = unmanifest_list in
+  let te' = TE.add l (Type.List Type.eff) (TE.add y Type.eff env.te) in
+  let pe' = env.pe @ y_ps in
+  let seqno' = env.seqno + 1 in
+  let effs' = y::(env.effs) in
+  let env' = {env with seqno=seqno'; te=te'; pe=pe'; effs=effs'} in
+  let ret_sv = S.List (ys, Some (S.Var l)) in
+    (ret_sv,env')
+
+let doIt_get_all env = 
+  let (y,y_ps) = mk_new_effect_get_all env in
   let vis (id1,id2) = S.App (L.vis, [S.Var id1;
                                      S.Var id2]) in
   let grded_eff (id1,id2) = 
@@ -413,8 +492,10 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
               with Not_found -> 
                 try ret @@ S.Var (Ident.create @@ 
                                    List.assoc name pervasives) 
-                with Not_found -> 
-                  failwith @@ name^" not found\n"
+                with Not_found ->  
+                  if name="get_all" then
+                    doIt_get_all env
+                  else failwith @@ name^" not found\n"
           end
     (* constant *)
     | Texp_constant const ->
@@ -521,16 +602,9 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                * type arguments by unifying function type with function
                * expression type.
                *)
-              (*let _ = printf "--- %s %d\n" (Ident.name fun_t.name) (List.length fun_t.args_t) in*)
               let arrow_tye = Misc.to_tye @@ 
                               Misc.curry (List.map snd fun_t.args_t)
                                  fun_t.res_t in
-              (*let strf = Format.str_formatter  in
-              let _ = List.map (fun (x, y) -> printf "%s\n" (Ident.name x)) fun_t.args_t in
-              let _ = Printtyp.raw_type_expr strf arrow_tye in
-              let _ = Format.fprintf strf "\n" in
-              let _ = Printtyp.raw_type_expr strf e1.exp_type in
-              let _ = Format.fprintf strf "\n" in*)
               let tye_binds = Misc.unify_tyes arrow_tye e1.exp_type in
               let (res_sv, res_env) = 
                     doIt_fun_app env'' (Fun.T fun_t) tye_binds sv2s in
@@ -589,6 +663,7 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
           (* List and Option are special cases where the interpreter 
            * does some of the reasoning. *)
           | List ([],Some l) -> raise UListMatched
+          | scru_sv when (to_string scru_sv = "repl_ids") -> raise UListMatched
           | List (conc,abs) -> doIt_list_cases env' (conc,abs) cases
           | Option op -> doIt_option_cases env' op cases 
           (*| ITE (true_grd, true_sv, false_sv) -> 
@@ -654,8 +729,8 @@ and doIt_sv_cases env scru_sv typ cases =
   (*| Type.List _ -> doIt_list_cases env [scru_sv] cases*)
   | _ -> (*doIt_list_cases env scru_sv cases*)
          let _ = S.print S.empty_indent scru_sv in
-         failwith @@ "doIt_sv_cases Unimpl. for "
-         ^(S.to_string scru_sv)^" : "^(Type.to_string typ)
+         failwith @@ "doIt_sv_cases Unimpl."
+         (*^(S.to_string scru_sv)^" : "^(Type.to_string typ)*)
 
 and doIt_option_cases env op cases = 
   let _ = if List.length cases = 2 then ()
@@ -890,8 +965,21 @@ let extract_oper_cons (schemas) : S.t list =
               List.map doIt_schema schemas in
   all_cons 
 
+let get_obtypes opers = 
+  List.fold_right (fun oper acc -> 
+      match oper with
+      | S.Var oper_name -> 
+        let objtyp_name = 
+          match Str.split (Str.regexp "_") 
+              (Ident.name oper_name) with
+          | x::y::xs -> x
+          | _ -> failwith "Unexpected form of EffCons name" in
+        if not (List.mem objtyp_name acc)
+          then objtyp_name::acc
+        else acc) opers []
+
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 50 (* k'*) in
+  let _ = k := 15 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -900,10 +988,22 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                               Ident.create @@ "E"^(string_of_int i)) in
   let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
   let oper_cons = extract_oper_cons schemas in
+  let _ = oper_consts := oper_cons in
+  let _ = objtype_consts := get_obtypes oper_cons in
+  (* Add svs for replicas *)
+  let repl_list = match KE.find_name "ReplId" ke with
+                  | Kind.Enum x -> x
+                  | _ -> failwith "ReplID not found in KE" in
+  let (te, replsvs) = List.fold_right 
+                  (fun r (te, svs) -> let rid = Ident.create @@ fresh_name () in
+                    (TE.add rid Type.uuid te, 
+                      (S.Var rid)::svs)) repl_list (te, []) in  
+  let _ = repl_svs := replsvs in
   (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
   (*let txn_list = ["do_bid_for_item"; "do_withdraw_wallet"] in*)
   (*let txn_list = ["do_new_tweet"] in*)
-  let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in
+  (*let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in*)
+  let txn_list = ["do_prepare"] in
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
   let ssn2 = fresh_ssn () in
   let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in
