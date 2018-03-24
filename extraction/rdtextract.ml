@@ -57,7 +57,8 @@ let schema_of_mod ppf (mod_name: Ident.t) (mod_exp :Typedtree.module_expr)
     match ctyp_desc with
       | Ttyp_constr (path,longident,_) -> 
           let path_str = Printtyp.string_of_path path in
-          let coltype_of_str str = match Str.split (Str.regexp "\.") path_str with
+          let coltype_of_str str = 
+            match Str.split (Str.regexp "\.") path_str with
             | ["id"] -> Coltype.Fkey mod_name
             | [table_name;"id"] -> Coltype.Fkey (Ident.create table_name)
             | _ -> failwith ("coltype_of_str ("^str^"): Unimpl.") in

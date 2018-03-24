@@ -7,9 +7,9 @@ type repl_id = int
  * sends Prepare and Propose messages (Get is a read).*)
 module Proposer = 
 struct
-  type id = int(*repl_id*)
+  type id = Uuid.t(*repl_id*)
   type eff = Prepare of {round:int}
-           | Propose of {round:int; value:bool}
+           | Propose of {round:int; value:int}
            | Get
 end
 
@@ -20,9 +20,11 @@ end
 
 module Acceptor = 
 struct
-  type id = int(*repl_id*)
-  type eff = Promise of {round:int; prev_vote_round: int; prev_vote_val:bool}
-           | Accept of {round:int; value:bool}
+  type id = Uuid.t(*repl_id*)
+  type eff = Promise of {round:int}
+           | PromiseWithPrev of {round:int; prev_vote_round: int; 
+                                 prev_vote_val:int}
+           | Accept of {round:int; value:int}
            | Get
 end
 
@@ -33,8 +35,8 @@ end
 
 module Learner = 
 struct
-  type id = int(*repl_id*)
-  type eff = Decide of {round:int; value:bool}
+  type id = Uuid.t(*repl_id*)
+  type eff = Decide of {round:int; value:int}
            | Get
 end
 
@@ -42,6 +44,69 @@ module Learner_table =
 struct
   include Store_interface.Make(Learner)
 end
+
+module List = 
+struct
+  open List
+  let rec map f l = match l with
+    | [] -> []
+    | x::xs -> (f x)::(map f xs)
+
+  let rec concat ls = 
+    let rec append l1 l2 = match l1 with
+      | [] -> l2
+      | x::xs -> x::(append xs l2) in
+      match ls with
+        | [] -> []
+        | l::rest -> append l (concat rest)
+
+  let rec fold_left f b l = match l with
+    | [] -> b
+    | x::xs -> fold_left f (f b x) xs
+
+  let rec fold_right f l b = match l with
+    | [] -> b
+    | x::xs -> f x (fold_right f xs b)
+
+  let rec iter f l = match l with
+    | [] -> ()
+    | x::xs -> (f x; iter f xs)
+
+  let rec first_some l = match l with
+    | [] -> None
+    | x::xs -> (match x with 
+                  | None -> first_some xs
+                  | Some _ -> x)
+
+  let rec forall l f = match l with
+    | [] -> true
+    | x::xs -> (f x)&&(forall xs f)
+
+  let rec exists l f = match l with
+    | [] -> false
+    | x::xs -> (f x)||(exists xs f)
+
+  let rec all_same l =
+    let rec all_same_v (l: int option list) (v:int) : bool =
+      match l with
+      | [] -> true
+      | x::xs -> let t = all_same_v xs v in
+                 (match x with
+                 | Some y -> y=v && t
+                 | _ -> t) in
+    match l with
+    | [] -> true
+    | x::xs -> (match x with
+               | Some y -> all_same_v xs y
+               | _ -> all_same xs)
+
+  let rec length l = 
+    match l with
+    | [] -> 0
+    | x::xs -> 1 + length xs
+end
+
+let get_all = []
 
 (* ----------------- ACTIONS OF THE PROPOSER ---------------------- *)
 
@@ -181,168 +246,164 @@ let do_learn repl_ids =
 let do_decide n (r,v) = 
   Learner_table.append n (Learner.Decide {round=r; value=v})*)
 
+(*** Auxilliary Functions Begin ***)
+
+let get_decided_v x1 = 
+  match x1 with
+  | Some x ->
+    (match x with 
+    | Learner.Decide {value=v} -> Some v 
+    | _ -> None)
+  | _ -> None
+
+let get_proposed_v_for_r r x1 = 
+  match x1 with
+  | Some x -> 
+    (match x with 
+    | Proposer.Propose {round=r1; value=v} -> if r=r1 then Some v else None
+    | _ -> None)
+  | _ -> None
+
+let check_accepted_rv r v eff1 = 
+ match eff1 with
+ | Some eff ->
+   (match eff with
+   | Acceptor.Accept{round=r1;value=v1} -> r1=r && v1=v
+   | _ -> false)
+ | _ -> false
+
+let check_proposed_rv r v eff1 = 
+  match eff1 with
+  | Some eff ->
+    (match eff with
+           | Proposer.Propose{round=r1;value=v1} -> r1=r && v1=v
+           | _ -> false)
+  | _ -> false
+
+ let check_decided_rv r v x1 = 
+   match x1 with
+   | Some x -> 
+     (match x with 
+     | Learner.Decide {round=r1; value=v1} -> r1=r && v1=v
+     | _ -> false)
+   | _ -> false
+
+ let inc_if_decided_rv r v x1 acc = 
+   match x1 with
+  | Some x -> 
+    (match x with 
+    | Acceptor.Accept {round=r1;value=v1} -> 
+      if r=r1&&v=v1 then acc+1 else acc
+    | _ -> acc)
+  | _ -> acc
+
+ let check_accepted_r r eff1 =
+  match eff1 with
+  | Some eff ->
+    (match eff with
+    | Acceptor.Accept{round=r2} -> 
+      r=r2
+    | _ -> false)
+  | _ -> false
+
+(*** Auxilliary Functions End ***)
+
 (*∀n1,n2 : node,r1,r2 : round,v1,v2 : value. 
  decision(n1,r1,v1) ∧ decision(n2,r2,v2) → v1 = v2 *)
 
-let inv1 repl_ids = 
-  let lhist = List.concat @@ List.map 
-      (fun n -> Learner_table.get n Learner.Get) repl_ids in
-  let lvalues = List.fold_right 
-    (fun x1 acc -> match x1 with
-       | Some x ->
-         (match x with 
-         | Learner.Decide {value=v} -> v::acc 
-         | _ -> acc)
-       | _ -> acc) lhist [] in
-  let lv = List.hd lvalues in
-  List.for_all (fun v -> v=lv) lvalues
+let inv1 (dummy:int) = 
+  let hist = get_all in 
+  let lvalues = List.map (get_decided_v) hist in
+  List.all_same lvalues
 
 (*∀r : round,v1,v2 : value. 
  propose_msg(r,v1) ∧ propose_msg(r,v2) → v1 = v2*)
 
-let inv2 r repl_ids = 
-  let phist = List.concat @@ List.map 
-      (fun n -> Proposer_table.get n Proposer.Get) repl_ids in
-  let pvalues = List.fold_right 
-    (fun x1 acc -> match x1 with
-       | Some x -> 
-         match x with 
-         | Proposer.Propose {round=r1; value=v} -> if r=r1 then v::acc else acc
-         | _ -> acc
-       | _ -> acc) phist [] in
-  let pv = List.hd pvalues in
-  List.for_all (fun v -> v=pv) pvalues
+let inv2 r = 
+  let hist = get_all in
+  let pvalues = List.map (get_proposed_v_for_r r) hist in
+  List.all_same pvalues
 
 (*∀n : node,r : round,v : value. 
  vote_msg(n,r,v) → propose_msg(r,v)*)
 
-let inv3 n r v repl_ids = 
-  let phist = List.concat @@ List.map 
-      (fun n -> Proposer_table.get n Proposer.Get) repl_ids in
-  let ahist = Acceptor_table.get n Acceptor.Get in
-  if List.exists (fun eff1 -> match eff1 with
-                    | Some eff ->
-                      (match eff with
-                      | Acceptor.Accept{round=r1;value=v1} -> r1=r && v1=v
-                      | _ -> false)
-                    | _ -> false) ahist then
-    List.exists (fun eff1 -> match eff1 with
-                    | Some eff ->
-                      (match eff with
-                             | Proposer.Propose{round=r1;value=v1} -> r1=r && v1=v
-                             | _ -> false)
-                    | _ -> false) phist
+let inv3 n r v = 
+  let hist = get_all in
+  if List.exists hist (check_accepted_rv r v) then
+    List.exists hist (check_proposed_rv r v) 
   else true
 
 (*∀r : round,v : value. 
- (∃n : node. decision(n,r,v)) → ∃q : quorum.∀n : node. member(n,q) → vote_msg(n,r,v) *) 
+(∃n : node. decision(n,r,v)) → ∃q : quorum.∀n : node. member(n,q) → vote_msg(n,r,v) *) 
 
- let inv4 r v repl_ids = 
-   let lhist = List.concat @@ List.map 
-    (fun n -> Learner_table.get n Learner.Get) repl_ids in
-   let rv_decided = List.exists 
-     (fun x1 -> match x1 with
-               | Some x -> 
-                 (match x with 
-                 | Learner.Decide {round=r1; value=v1} -> r1=r && v1=v
-                 | _ -> false)
-               | _ -> false) lhist in
+ let inv4 r v = 
+   let hist = get_all in
+   let rv_decided = List.exists hist (check_decided_rv r v) in
    if rv_decided then
-     let n_repls = List.length repl_ids in
-     let ahist = List.concat @@ List.map 
-         (fun n -> Acceptor_table.get n Acceptor.Get) repl_ids in
-     let n_accepts = List.fold_right 
-         (fun x1 acc -> match x1 with
-            | Some x -> 
-              (match x with 
-              | Acceptor.Accept {round=r1;value=v1} -> 
-                if r=r1&&v=v1 then acc+1 else acc
-              | _ -> acc)
-            | _ -> acc) ahist 0 in
+     let n_repls = 3 in (*List.length repl_ids in*)
+     let n_accepts = List.fold_right (inc_if_decided_rv r v) hist 0 in
      2*n_accepts > n_repls
    else true
 
 (* ∀n : node, r,r′: round, v,v′: value. 
  join_ack_msg(n,r, ⊥,v) ∧ r′ < r → ¬vote_msg(n,r′,v′) *)
 
- let inv5 n r v = 
+ let check_inv5 r' ahist eff1 = 
+   match eff1 with
+   | Some eff ->
+       (match eff with
+       | Acceptor.Promise {round=r} -> 
+         if r'<r then 
+           not (List.exists ahist (check_accepted_r r'))
+         else true
+       | _ -> true)
+   | _ -> true
+
+ let inv5 n r' = 
    let ahist = Acceptor_table.get n Acceptor.Get in
-   List.fold_right 
-     (fun eff1 acc -> match eff1 with
-          | Some eff ->
-                (match eff with
-                | Acceptor.Promise {prev_vote=None;round=r'} -> 
-                  if r'<r then 
-                    let x = not (List.exists (fun eff1 -> 
-                      match eff1 with
-                      | Some eff ->
-                        (match eff with
-                        | Acceptor.Accept{round=r''} -> 
-                          r''=r'
-                        | _ -> false)
-                      | _ -> false) ahist) in
-                    x && acc
-                  else acc
-                | _ -> acc)
-          | _ -> acc) ahist true
+   List.forall ahist (check_inv5 r' ahist)
 
 (* ∀n : node, r,r′: round, v : value. 
  join_ack_msg(n,r,r′,v) ∧ r′ <> ⊥ → r′ < r ∧ vote_msg(n,r′,v) *)
 
- let inv6 n r v = 
-   let ahist = Acceptor_table.get n Acceptor.Get in
-   List.fold_right 
-     (fun eff1 acc -> match eff1 with
-          | Some eff ->
-                (match eff with
-                | Acceptor.Promise {prev_vote=Some (r', v);round=r1} -> 
-                  if r=r1 then
-                    r'<r && 
-                    let x = not (List.exists (fun eff1 -> 
-                      match eff1 with
-                      | Some eff ->
-                        (match eff with
-                        | Acceptor.Accept{round=r''} -> 
-                          r''=r'
-                        | _ -> false)
-                      | _ -> false) ahist) in
-                    x && acc
-                  else acc
-                | _ -> acc)
-          | _ -> acc) ahist true
+let check_inv6 ahist eff1 = 
+  match eff1 with
+  | Some eff ->
+        (match eff with
+        | Acceptor.PromiseWithPrev {prev_vote_round=r';
+                            prev_vote_val=v;round=r} -> 
+            r'<r && List.exists ahist (check_accepted_rv r' v)
+        | _ -> true)
+  | _ -> true
+
+let inv6 n = 
+  let ahist = Acceptor_table.get n Acceptor.Get in
+  List.forall ahist (check_inv6 ahist)
 
 (* ∀n : node, r,r′,r′′: round, v,v′: value.
 join_ack_msg(n,r,r′,v) ∧ r′ <> ⊥ ∧ r′ < r′′ < r → ¬vote_msg(n,r′′,v′) *)
+
+let check_inv7 r'' ahist eff1 = 
+  match eff1 with
+   | Some eff ->
+         (match eff with
+         | Acceptor.PromiseWithPrev {prev_vote_round=r';
+                              prev_vote_val=v;round=r} -> 
+           if r'<r'' && r''<r then
+             not (List.exists ahist (check_accepted_r r''))
+           else true
+         | _ -> true)
+   | _ -> true
  
- let inv7 n r r'' v = 
-   let ahist = Acceptor_table.get n Acceptor.Get in
-   List.fold_right 
-    (fun eff1 acc -> match eff1 with
-         | Some eff ->
-               (match eff with
-               | Acceptor.Promise {prev_vote=Some (r', v);round=r1} -> 
-                 if r=r1 && r'<r'' && r''<r then
-                   let x = not (List.exists (fun eff1 -> 
-                     match eff1 with
-                     | Some eff ->
-                       (match eff with
-                       | Acceptor.Accept{round=r2} -> 
-                         r''=r2
-                       | _ -> false)
-                     | _ -> false) ahist) in
-                   x && acc
-                 else acc
-               | _ -> acc)
-         | _ -> acc) ahist true
+let inv7 n r'' = 
+  let ahist = Acceptor_table.get n Acceptor.Get in
+  List.forall ahist (check_inv7 r'' ahist) 
 
-  let inv_fun n r r'' v repl_ids =
-    inv7 n r r'' v &&
-    inv6 n r v &&
-    inv5 n r v &&
-    inv4 r v repl_ids &&
-    inv3 n r v repl_ids &&
-    inv2 r repl_ids &&
-    inv1 repl_ids
-
-    
- (* ∀n : node,v : value. ¬vote_msg(n, ⊥,v) *)
+let inv_fun (n:Uuid.t) (r:int) (v:int) =
+  inv7 n r &&
+  inv6 n &&
+  inv5 n r &&
+  inv4 r v &&
+  inv3 n r v &&
+  inv2 r &&
+  inv1 0
