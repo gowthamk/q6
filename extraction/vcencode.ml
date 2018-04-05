@@ -627,55 +627,124 @@ let assert_tpcc_contracts () =
   let dget = const_of_name "District_Get" in
   let oget = const_of_name "Order_Get" in
   let olget = const_of_name "Orderline_Get" in
-  let dsetnoid = const_of_name "District_SetNextOID" in
+  let hget = const_of_name "History_Get" in
+  let wget = const_of_name "Warehouse_Get" in
+  let cget = const_of_name "Customer_Get" in
+  let caddbal = const_of_name "Customer_AddBal" in
+  let noget = const_of_name "NewOrder_Get" in
+  let dincnoid = const_of_name "District_IncNextOID" in
   let oadd = const_of_name "Order_Add" in
   let oladd = const_of_name "Orderline_Add" in
-  let wsetytd = const_of_name "Warehouse_SetYTD" in
+  let waddytd = const_of_name "Warehouse_AddYTD" in
   let dsetytd = const_of_name "District_SetYTD" in
-  let dgetytd = const_of_name "District_GetYTD" in
-  let wgetytd = const_of_name "Warehouse_GetYTD" in
-  let hget = const_of_name "History_Get" in
   let hadd = const_of_name "History_Append" in
-  let f a b c d =
-    mk_and [(*oper(a) @= dsetnoid;*)
-            txn(a) @= nwordtxn;
-            (*oper(b) @= dget;
-            oper(c) @= oadd;
-            oper(d) @= oget;*)
-            vis(a, b);
-            so(a, c);
-            so(b, d);
-            sameobj(a, b);
-            sameobj(c, d);
-            sametxn(a,c)] @=> vis(c,d) in
-  let g a b c d = 
-    mk_and [(*oper(a) @= dsetytd;
-            oper(b) @= wsetytd;
-            oper(c) @= dgetytd;
-            oper(d) @= wgetytd;*)
-            txn(a) @= ptxn;
-            sametxn(a,b);
-            so(b, a);
-            so(d, c);
-            sameobj(a, c);
-            sameobj(b, d);
-            sametxn(c, d);
-            vis(b, d)] @=> vis(a, c) in
-  (*let h a b c d = 
-    mk_and [oper(a) @= dsetytd;
-            oper(b) @= hadd;
-            oper(c) @= dgetytd;
-            oper(d) @= hget;
-            txn(a) @= ptxn;
-            sametxn(a,b);
-            so(a, b);
-            so(c, d);
-            sameobj(a, c);
-            sameobj(b, d);
-            sametxn(c, d);
-            vis(a, c)] @=> vis(b, d) in*)
-  (*let g a b = (mk_app ts [a]) @!= (mk_app ts [b]) in*)
-  let asns = List.map expr_of_quantifier [forallE4 f; forallE4 g(*); forallE4 h*)] in
+  let ts = fun_of_str "ts" in
+  let oid = fun_of_str "o_id" in
+  let odid = fun_of_str "o_d_id" in
+  let owid = fun_of_str "o_w_id" in
+  let gt_0_assertions = List.map (fun str -> let f = fun_of_str str in
+                      let h a = (mk_app f [a]) @>= (mk_numeral_i 0) in
+                      forallE1 h) ["ts";"o_id"] in
+  let f11 a b c d = 
+    mk_and [oper(a)@=dincnoid;
+            oper(b)@=oadd;
+            oper(c)@=dget;
+            oper(d)@=oget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d);] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
+                                      mk_and [mk_not(vis(b,d));
+                                              mk_not(vis(a,c))]] in
+  let f11' a b =
+    mk_and [oper(a) @= dincnoid; 
+            oper(b) @= dget; 
+            sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let f12 a b c d = 
+    mk_and [oper(a)@=oadd;
+            oper(b)@=oladd;
+            oper(c)@=oget;
+            oper(d)@=olget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
+                                     mk_and [mk_not(vis(b,d));
+                                             mk_not(vis(a,c))]] in
+  let f12' a b = mk_and 
+                  [(mk_app oid [a]) @= (mk_app oid [b]);
+                   (mk_app odid [a]) @= (mk_app odid [b]);
+                   (mk_app owid [a]) @= (mk_app owid [b])] @=> (a@=b) in
+  let f23 a b c d = 
+    mk_and [oper(a)@=waddytd;
+            oper(b)@=hadd;
+            oper(c)@=wget;
+            oper(d)@=hget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
+                                     mk_and [mk_not(vis(b,d));
+                                             mk_not(vis(a,c))]] in
+  let f31 a b c d = 
+    mk_and [oper(a)@=caddbal;
+            oper(b)@=hadd;
+            oper(c)@=cget;
+            oper(d)@=hget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
+                                     mk_and [mk_not(vis(b,d));
+                                             mk_not(vis(a,c))]] in
+  (*let f12' a b c d = 
+    mk_and [oper(a)@=oadd;
+            oper(b)@=oladd;
+            oper(c)@=oget;
+            oper(d)@=olget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d);
+            vis(b,d)] @=> vis(a,c) in*)
+  (*let f2 a b =
+    mk_and [oper(a)@=oadd;
+            oper(b)@=oget;
+            currtxn(a);
+            notsametxn(a,b);
+            sameobj(a,b)] @=> vis(a,b) in*)
+  (*let f12'' a b = 
+    mk_and [oper(a)@=oadd;
+            (*currtxn(a);*)
+            sameobj(a,b);
+            oper(b)@=oget] @=> (sametxn(a,b) @| vis(a,b))  in*)
+  (*let f a b c d =
+    mk_and [mk_or [oper(d) @= dget;
+                   oper(d) @= oget;
+                   oper(d) @= olget;
+                   oper(d) @= hget;
+                   oper(d) @= wget;
+                   oper(d) @= cget;
+                   oper(d) @= noget];
+            so(a,b);vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in*)
+  let g a b = ((mk_app ts [a]) @!= (mk_app ts [b])) @| (a@=b) in
+  (*let h a b = [oper(a) @= oadd;
+               txn(a) @= nwordtxn;
+               oper(b) @= oget] @=> sametxn(a,b) @| vis(a, b) in*)
+  let assertions = List.concat [[(*forallE4 f11;
+                                 forallE2 f11';*)
+                                 (*forallE4 f12;*)
+                                 forallE2 f12';
+                                 (*forallE4 f23;*)
+                                 forallE4 f31;
+
+                                 (*forallE2 f12'';*)
+                                 (*forallE2 f1;
+                                 forallE2 f2;
+                                 forallE2 g;*)
+                                 (*forallE2 h;*)];
+                                 gt_0_assertions] in
+  let asns = List.map expr_of_quantifier assertions in
     _assert_all asns
 
 let mk_cc op = 
@@ -693,32 +762,48 @@ let mk_sc op op_list =
         vis(a, b) @| vis(b, a) (*@| (a@=b)*) in
   forallE2 f
 
-(*let assert_paxos_contracts () = 
-  let op1 = const_of_name "Acceptor_Accept" in
-  let op2 = const_of_name "Proposer_Ack" in
-  let op3 = const_of_name "Acceptor_PrepareRequest" in
-  let op4 = const_of_name "Proposer_PrepareResponse" in
-  let op5 = const_of_name "Proposer_GetSummary" in
-  let op6 = const_of_name "Acceptor_SetPromise" in
-  let op7 = const_of_name "Proposer_AcceptRequested" in
-  let op8 = const_of_name "Acceptor_Accepted" in
-  let op9 = const_of_name "Acceptor_GetSummary" in
-  let txn1 = const_of_name "do_proposal_response" in
-  let n  = fun_of_str "n" in
-  let v  = fun_of_str "v" in
-  let prop_id  = fun_of_str "proposal_id" in
-  let h_n a = (mk_app n [a]) @>= (mk_numeral_i 0) in
-  let h_v a = (mk_app v [a]) @>= (mk_numeral_i 0) in
-  let h_prop_id a = (mk_app prop_id [a]) @>= (mk_numeral_i 0) in
-  let h_assertions = List.map forallE1 [h_n; h_v; h_prop_id] in
-  let acc_assertions = mk_sc op9 [op1; op3; op6; op8] in
-  let prop_assertions = 
-  let sc_assertions = List.map mk_sc [(*op1;op2;op3;*)(*op4;op5;op6;op7;op8;*)op9] in
-  let assertions = List.concat [h_assertions; sc_assertions] in
-  let asns = List.map expr_of_quantifier assertions in
-  _assert_all asns*)
+let assert_paxos_contracts () = 
+  let propose = const_of_name "Proposer_Propose" in
+  let promise = const_of_name "Acceptor_Promise" in
+  let accept = const_of_name "Acceptor_Accept" in
+  let proposal_txn = const_of_name "do_proposer_action" in
+  let ac_get = const_of_name "Acceptor_Get" in
+  let pr_get = const_of_name "Proposer_Get" in
+  let lr_get = const_of_name "Learner_Get" in
+  let prev_val = fun_of_str "prev_vote_val" in
+  let prev_round = fun_of_str "prev_vote_round" in
+  let round = fun_of_str "round" in
+  let value = fun_of_str "value" in
+  let h_prev_v a = (mk_app prev_val [a]) @> (mk_numeral_i (0-1)) in
+  let h_prev_r a = (mk_app prev_round [a]) @> (mk_numeral_i (0-1)) in
+  let h_v a = (mk_app value [a]) @> (mk_numeral_i (0-1)) in
+  let h_round a = (mk_app round [a]) @> (mk_numeral_i (0-1)) in
+  let prop_uniq a b = mk_and [oper(a)@=propose;
+                              oper(b)@=propose]
+                      @=> ((mk_app round [a]) @!= (mk_app round [b])) @| a@=b in
+  let f a b c d = 
+    mk_and [mk_or [oper(d) @= ac_get; oper(d) @= pr_get;oper(d) @= lr_get]; 
+            so(a,b); vis(b,c); so(c,d)(*); sameobj(a,d)*)] @=> vis(a,d) in
+  let f1 a b =
+    mk_and [oper(a) @= propose; 
+            mk_or [oper(b) @= ac_get; oper(b) @= pr_get; oper(b) @= lr_get];
+            txn(b) @= proposal_txn;
+            (*sameobj(a,b)*)] @=> (sametxn(a,b) @| vis(a,b)) in
+  let i a b =
+    mk_and [oper(a) @= propose;
+            notsametxn(a,b);
+            currtxn(b)] @=> vis(a, b) in
+  let asns = List.map expr_of_quantifier [forallE4 f] in
+  let h_assertions = List.map forallE1 [h_prev_v;h_v; h_round;h_prev_r] in
+  let asns = List.map expr_of_quantifier @@ 
+                          List.concat [h_assertions;
+                                      [forallE2 prop_uniq;
+                                       forallE4 f;
+                                       forallE2 i;
+                                       forallE2 f1]] in
+  _assert_all asns
 
-let assert_contracts () = (*assert_shcart_contracts*) ()
+let assert_contracts () = assert_tpcc_contracts ()
 
 (*
 let assert_contracts () = ()
@@ -759,7 +844,7 @@ let rec doIt_sv sv =
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
 
 let rec doIt_pred p = match p with
-  | P.BoolExpr v -> doIt_sv v
+  | P.BoolExpr v -> let _ = S.print S.empty_indent v in doIt_sv v
   | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
   | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
   | P.Forall (ty,f) -> expr_of_quantifier @@

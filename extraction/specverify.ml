@@ -217,15 +217,15 @@ let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
                      S.Var env.ssn) in
   let phi_7 = S.Eq (S.App (L.seqno, [sv_y]), 
                      S.ConstInt env.seqno) in
-  let is_currtxn = not env.is_inv in
+  (*let is_currtxn = not env.is_inv in
   let phi_8 = S.Eq (S.App (L.currtxn, [sv_y]), 
-                     S.ConstBool is_currtxn) in
+                     S.ConstBool is_currtxn) in*)
   (* For the new effect, phi_1 to phi_8 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ S.And 
                 ([phi_1; phi_2; phi_3] @ phis_4 @ 
-                     [phi_5; phi_6; phi_7; phi_8]) in
+                     [phi_5; phi_6; phi_7(*; phi_8*)]) in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
@@ -249,7 +249,10 @@ let mk_new_effect_get_all env =
     | _ -> failwith "doIt_append: unexpected sv2" in*)
   let args = [] in
   let mkkey_ty1 = L.mkkey (Type.to_string Type.replid) in
-  let opers = !oper_consts in   
+  let opers = List.filter (fun x -> 
+              let S.Var y = x in
+              let [x;xs] = Str.split (Str.regexp "_") (Ident.name y) in 
+              xs="Get") !oper_consts in   
   let phi_1 = S.Or (List.map (fun sv1 -> S.Eq (S.App (L.objid, [sv_y]),
                      S.App (mkkey_ty1, [sv1]))) !repl_svs) in
   let phi_2 = S.Or (List.map (fun oper -> S.Eq (S.App (L.oper, [sv_y]), 
@@ -267,15 +270,15 @@ let mk_new_effect_get_all env =
                      S.Var env.ssn) in
   let phi_7 = S.Eq (S.App (L.seqno, [sv_y]), 
                      S.ConstInt env.seqno) in
-  let is_currtxn = not env.is_inv in
+  (*let is_currtxn = not env.is_inv in
   let phi_8 = S.Eq (S.App (L.currtxn, [sv_y]), 
-                     S.ConstBool is_currtxn) in
+                     S.ConstBool is_currtxn) in*)
   (* For the new effect, phi_1 to phi_8 are true only under 
   * the current branch *)
   let tcond = P.of_svs env.path in
   let tconj = P.of_sv @@ S.And 
                 ([phi_1; phi_2; phi_3] @ (*phis_4 @*) 
-                     [phi_5; phi_6; phi_7; phi_8]) in
+                     [phi_5; phi_6; phi_7(*; phi_8*)]) in
   let tcondp = P._if (tcond, tconj) in
   let phi_2' = S.Eq (S.App (L.oper, [sv_y]),
                      S.Var (Cons.name Cons.nop))  in
@@ -322,7 +325,7 @@ let doIt_get env typed_sv1 sv2 =
   let seqno' = env.seqno + 1 in
   let effs' = y::(env.effs) in
   let env' = {env with seqno=seqno'; te=te'; pe=pe'; effs=effs'} in
-  let ret_sv = S.List (ys, Some (S.Var l)) in
+  let ret_sv = S.List (ys, None(*Some (S.Var l)*)) in
     (ret_sv,env')
 
 let doIt_get_all env = 
@@ -354,6 +357,8 @@ let doIt_get_all env =
 
 let (unmanifest_list_map : (string * S.t list, Ident.t) Hashtbl.t) 
     = Hashtbl.create 217
+let (dummy_id_map : (string, S.t) Hashtbl.t) 
+    = Hashtbl.create 17
 
 let gen_passwd length =
     let gen() = match Random.int(26+26+10) with
@@ -418,28 +423,23 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
     let abstract_fun_app () = 
       let fname = Ident.name fun_t.name in
       let args = fun_t.clos_args @ arg_svs in
-      if Hashtbl.mem unmanifest_list_map (fname, args) then 
-        (S.Var (Hashtbl.find unmanifest_list_map (fname, args)), 
+      let args_str = List.map (fun arg -> S.to_string arg) args in
+      if Hashtbl.mem unmanifest_list_map (fname, args(*_str*)) then 
+        (S.Var (Hashtbl.find unmanifest_list_map (fname, args(*_str*))), 
          env)
       else 
         let res_v = Ident.create @@ fresh_name () in 
-        (*let _ = printf "%s " fname in
+        let _ = printf "%s " fname in
         let _ = List.map (fun sv -> printf "%s " (S.to_string sv)) args in
-        let _ = printf "---> %s\n" (Ident.name res_v) in*)
+        let args_str = List.map (fun sv -> S.to_string sv) args in
+        let _ = printf "---> %s\n" (Ident.name res_v) in
         let xte = TE.add res_v res_ty env.te in
         let _ = Hashtbl.add unmanifest_list_map 
-                   (fname, args) res_v in
+                   (fname, args(*_str*)) res_v in
           (S.Var res_v, {env with te = xte}) in
     match (env.is_inv, res_ty) with
       | (false, Type.Bool) -> abstract_fun_app ()
       | _ -> 
-          let fname = Ident.name fun_t.name in
-          let temp_fun_list = [(*"is_gte";*) (*"gt";*) (*"is_max_in";*) (*"max_ts";*)
-                               "is_valid_bid"; "get_item_cnt";(*) "check_accepted_n";*) 
-                                (*"check_accept_issued"*)] in
-          if List.mem fname temp_fun_list then
-            abstract_fun_app ()
-          else
             try 
               let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
               let (pe',body_sv') = P.simplify xenv'.pe body_sv in
@@ -495,7 +495,28 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                 with Not_found ->  
                   if name="get_all" then
                     doIt_get_all env
-                  else failwith @@ name^" not found\n"
+                  else 
+                    if String.sub name 0 5="dummy" then
+                      if Hashtbl.mem dummy_id_map "dummy" then
+                        ret @@ Hashtbl.find dummy_id_map "dummy"
+                      else 
+                        let new_uuid = Ident.create @@ fresh_uuid_name () in
+                        let _ = printf "Created1 %s\n" (Ident.name new_uuid) in
+                        let uuids = match KE.find_name "UUID" env.ke with
+                          | Kind.Extendible prev -> !prev
+                          | _ -> failwith "UUID Unexpected" in
+                        let ke' = KE.add (Ident.create "UUID")
+                                    (Kind.Extendible (ref @@ new_uuid::uuids))
+                                    env.ke in
+                        let sv = S.Var new_uuid in
+                        let _ = Hashtbl.add dummy_id_map "dummy" sv in
+                        (sv, {env with ke=ke'})
+                    else 
+                      if name="timestamp" then 
+                        let res_v = Ident.create @@ fresh_name () in 
+                        let xte = TE.add res_v Type.Int env.te in
+                        (S.Var res_v, {env with te = xte})
+                      else failwith @@ name^" not found\n"
           end
     (* constant *)
     | Texp_constant const ->
@@ -586,6 +607,7 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
           (* UUID.create () *)
           | S.Var id when (Ident.name id = "Uuid.create") -> 
               let new_uuid = Ident.create @@ fresh_uuid_name () in
+              let _ = printf "Created %s\n" (Ident.name new_uuid) in
               let uuids = match KE.find_name "UUID" env.ke with
                 | Kind.Extendible prev -> !prev
                 | _ -> failwith "UUID Unexpected" in
@@ -979,7 +1001,7 @@ let get_obtypes opers =
         else acc) opers []
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 15 (* k'*) in
+  let _ = k := 9 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -1001,9 +1023,9 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let _ = repl_svs := replsvs in
   (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
   (*let txn_list = ["do_bid_for_item"; "do_withdraw_wallet"] in*)
-  (*let txn_list = ["do_new_tweet"] in*)
+  let txn_list = [(*"do_payment_txn";*)"do_delivery_txn"] in
   (*let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in*)
-  let txn_list = ["do_prepare"] in
+  (*let txn_list = ["do_prepare"] in*)
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
   let ssn2 = fresh_ssn () in
   let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in
@@ -1042,7 +1064,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in*)
-  let tmp_name2 = "inv_fun" in
+  let tmp_name2 = "inv_payment_and_delivery_txn" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name2)
                      (invs)
@@ -1073,6 +1095,16 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       | _ -> failwith "Specverify.doIt: Unexpected" in*)
   let (effs1, effs2) = (env1'.effs, env2'.effs) in
   let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
+  let currtxn_assertion1 = 
+    P.forall Type.eff 
+        (fun v -> 
+           P._if (P.of_sv @@ in_set v effs1,
+                  P.of_sv @@ S.Eq (S.App (L.currtxn, [S.Var v]), S.ConstBool true))) in
+  let currtxn_assertion2 = 
+    P.forall Type.eff 
+        (fun v -> 
+           P._if (P.of_sv @@ S.Not (in_set v effs1),
+                  P.of_sv @@ S.Eq (S.App (L.currtxn, [S.Var v]), S.ConstBool false))) in
   let gen_or_list_successor opers eff1 eff2 = 
       let (op::ops) = opers in 
       let cond_for_op = get_arg_condition op eff1 eff2 schemas in
@@ -1114,7 +1146,9 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       List.map P.ground @@ List.concat @@ 
         wr_prog_list @ [inv_prog; 
                         (*comm_assertions;*)
-                        [int_comm_assertions];
+                        [currtxn_assertion1];
+                        [currtxn_assertion2];
+                        (*[int_comm_assertions];*)
                         (mk_ssn_cstr ssn2 effs2 ::
                         (List.map (fun ssn1 -> mk_ssn_cstr ssn1 effs1) ssn_list))]
     end in
