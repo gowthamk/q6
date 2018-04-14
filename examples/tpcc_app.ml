@@ -52,10 +52,12 @@ struct
   let exists l f = true
 end
 
+(*If no consistency is mentioned beside the effect, then it's EC.*)
+
 module Warehouse = struct
   type id = Uuid.t
   type eff = Get
-    | AddYTD of {w_id:id; ytd:int}
+    | AddYTD of {w_id:id; ytd:int} 
 end
 
 module Warehouse_table =
@@ -65,10 +67,9 @@ end
 
 module District = struct
   type id = Uuid.t
-  type eff = Get
-    | Dummy
-    | SetYTD of {d_id:id; d_w_id:Warehouse.id; ytd:int; ts:int}
-    | IncNextOID of {d_id:id; d_w_id:Warehouse.id}
+  type eff = Get 
+    | Dummy (*Only for Q6*)
+    | IncNextOID of {d_id:id; d_w_id:Warehouse.id} (*Consistency: TW*)
 end
 
 module District_table =
@@ -80,8 +81,6 @@ module Customer = struct
   type id = Uuid.t
   type eff = Get
     | AddBal of {c_id:id; c_w_id:Warehouse.id; c_d_id:District.id; c_bal:int}
-    | SetYTDPayment of {c_id:id; c_w_id: Warehouse.id; c_d_id: District.id; 
-                        c_ytd_payment: int; ts:int}
 end
 
 module Customer_table =
@@ -130,19 +129,12 @@ struct
   include Store_interface.Make(Orderline)
 end
 
-module NewOrder = struct 
-  type id = Uuid.t
-  type eff = Get
-     | Add of {no_o_id: int; no_d_id: District.id; no_w_id: Warehouse.id}
-     | Remove of {no_o_id: int; no_d_id: District.id; no_w_id: Warehouse.id}
-end
-
-module NewOrder_table =
-struct
-  include Store_interface.Make(NewOrder)
-end
-
 (* One dummy id per table *)
+(* All the effects for a single table are added on the same dummy key,
+   makes checking the invariant easier. The effect specifies the id it
+   is actually to be applied on. For example, the IncNextOID of the district 
+   table specifies the d_id:District.id and d_w_id:Warehouse.id it corresponds
+   to as part of its record.*)
 let dummy_hid = Uuid.create()
 let dummy_did = Uuid.create()
 let dummy_oid = Uuid.create()
@@ -195,25 +187,8 @@ let get_nextoid_sum did dwid eff1 acc =
      | _ -> acc)
   | _ -> acc
 
-(*let rec find_nextoid did dwid max_ts deffs =
-  match deffs with
-  | [] -> -1
-  | eff::effs -> 
-    let t = find_nextoid did dwid max_ts effs in
-    match eff with 
-    | Some y -> 
-      (match y with 
-       | District.SetNextOID {d_id=did1; d_w_id=dwid1; next_o_id=nextoid1; ts=ts1} -> 
-          if did1 = did && dwid1 = dwid && ts1=max_ts
-            then nextoid1 else t                                                     
-       | _ -> t)
-    | _ -> t*)
-
 let get_latest_nextoid did dwid = 
   let d_effs = District_table.get dummy_did (District.Get) in
-  (*let setnextoid_tslist = List.map (get_setnextoid_ts did dwid) d_effs in
-  let max_ts = max setnextoid_tslist in
-  find_nextoid did dwid max_ts d_effs*)
   List.fold_right (get_nextoid_sum did dwid) d_effs 0
 
 let get_oadd_oid did dwid eff1 = 
@@ -230,19 +205,6 @@ let get_maxoid did dwid =
   let oid_list = List.map (get_oadd_oid did dwid) o_effs in 
   max oid_list
 
-(*let rec find_warehouse_ytd dwid max_ts whseffs =
-  match whseffs with
-  | [] -> -1
-  | eff::effs -> 
-    let t = find_warehouse_ytd dwid max_ts effs in
-    match eff with 
-    | Some x -> (match x with 
-               | Warehouse.SetYTD {w_id=dwid1; ytd=ytd1; ts=ts1} -> 
-                  if dwid=dwid1 && ts1=max_ts
-                    then ytd1 else t
-               | _ -> t)
-    | _ -> t*)
-
 let get_waddytd dwid eff acc = 
  match eff with 
  | Some x -> (match x with 
@@ -253,37 +215,7 @@ let get_waddytd dwid eff acc =
 
 let get_warehouse_ytd dwid =
   let whs_effs = Warehouse_table.get dummy_wid (Warehouse.Get) in
-  (*let wsetytd_tslist = List.map (get_wsetytd_ts dwid) whs_effs in
-  let max_ts = max wsetytd_tslist in
-  find_warehouse_ytd dwid max_ts whs_effs*)
   List.fold_right (get_waddytd dwid) whs_effs 0
-
-let rec find_district_ytd did dwid max_ts deffs = 
-  match deffs with
-  | [] -> -1
-  | eff::effs -> 
-    let t = find_district_ytd did dwid max_ts effs in
-    match eff with 
-    | Some x -> (match x with 
-               | District.SetYTD {d_id=id; d_w_id=wid; ytd=ytd1; ts=ts1} -> 
-                  if id=did && wid=dwid && ts1=max_ts
-                    then ytd1 else t
-               | _ -> t)
-    | _ -> t
-
-let get_setdytd_ts did dwid eff1 =
-  match eff1 with 
-  | Some y -> (match y with 
-             | District.SetYTD {d_id=did2; d_w_id=wid2; ytd=ytd2; ts=ts2} -> 
-                if did2=did && wid2=dwid then Some ts2 else None
-             | _ -> None)
-  | _ -> None
-
-let get_district_ytd did dwid =
-  let d_effs = District_table.get dummy_did (District.Get) in
-  let setdytd_tslist = List.map (get_setdytd_ts did dwid) d_effs in 
-  let max_ts = max setdytd_tslist in
-  find_district_ytd did dwid max_ts d_effs
 
 let get_caddbal cid cdid cwid eff1 acc = 
   match eff1 with 
@@ -295,64 +227,9 @@ let get_caddbal cid cdid cwid eff1 acc =
              | _ -> acc)
   | _ -> acc
 
-(*let rec find_customer_bal cid cdid cwid max_ts ceffs = 
-  match ceffs with
-  | [] -> -1
-  | eff::effs ->  
-    let t = find_customer_bal cid cdid cwid max_ts effs in
-    match eff with 
-    | Some x -> (match x with 
-               | Customer.SetBal {c_id=id;c_d_id=did;c_w_id=wid; 
-                                  ts=ts1;c_bal=bal1} -> 
-                  if cid=id && wid=cwid && did=cdid && ts1=max_ts 
-                    then bal1 else t
-               | _ -> t)
-    | _ -> t*)
-
 let get_customer_bal (cid:Customer.id) (cdid:District.id) (cwid:Warehouse.id) =
   let c_effs = Customer_table.get dummy_cid (Customer.Get) in
-  (*let cbal_tslist = List.map (get_cbal_ts cid cwid cdid) c_effs in
-  let max_ts = max cbal_tslist in
-  find_customer_bal cid cdid cwid max_ts c_effs*)
   List.fold_right (get_caddbal cid cdid cwid) c_effs 0
-
-let rec find_customer_ytd cid cdid cwid max_ts ceffs = 
-  match ceffs with
-  | [] -> -1
-  | eff::effs -> 
-    let t = find_customer_ytd cid cdid cwid max_ts effs in
-    match eff with 
-     | Some x -> (match x with 
-                | Customer.SetYTDPayment {c_id=id;c_d_id=did; c_w_id=wid; 
-                                          ts=ts1; c_ytd_payment=ytd1} -> 
-                   if cid=id && wid=cwid && did=cdid && ts1=max_ts
-                     then ytd1 else t
-                | _ -> t)
-     | _ -> t
-
-let get_csetytd_ts cid cdid cwid eff1 =
-  match eff1 with 
-  | Some y -> (match y with 
-    | Customer.SetYTDPayment {c_id=id;c_d_id=did1; c_w_id=wid1; 
-                              c_ytd_payment=ytd1;ts=ts2} -> 
-        if id=cid && did1=cdid && wid1=cwid then
-          Some ts2 else None
-    | _ -> None)
-  | _ -> None
-
-let get_customer_ytd cid cdid cwid = 
-  let c_effs = Customer_table.get dummy_cid (Customer.Get) in
-  let csetytd_tslist = List.map (get_csetytd_ts cid cdid cwid) c_effs in
-  let max_ts = max csetytd_tslist in
-  find_customer_ytd cid cdid cwid max_ts c_effs
-
- let get_hamt_wdid wid did eff acc = 
-   match eff with
-   | Some x -> (match x with
-                | History.Append {h_w_id = hdwid; h_d_id = hdid; h_amount = h_amt} -> 
-                  if hdwid=wid && hdid=did then sum h_amt acc else acc
-                | _ -> acc)
-   | _ -> acc
 
  let get_hamt_wid wid eff acc = 
    match eff with
@@ -369,31 +246,6 @@ let get_customer_ytd cid cdid cwid =
                  if (wid1=wid && did1=did && oid1=oid) then amt else 0
                | _ -> 0)
    | _ -> 0
-
- let is_eff_setdeldate oid did wid eff = 
-   match eff with
-   | Some x ->
-     (match x with
-      | Orderline.SetDeliveryDate{ol_o_id=oid1;ol_d_id=did1;
-                                  ol_w_id=wid1} ->
-        oid1=oid && did1=did && wid1=wid
-      | _ -> false)
-   | _ -> false
-
- let is_ddatenotnull oid did wid effs = 
-   List.exists effs (is_eff_setdeldate oid did wid)
-
- (*let get_olamt_cid wid did cid orderline_ctxt eff acc = 
-   match eff with
-   | Some x -> (match x with
-               | Orderline.Add {ol_o_id= oid1; ol_d_id=did1; ol_w_id=wid1; 
-                                ol_c_id=cid1; ol_amt=amt} -> 
-                 let b = is_ddatenotnull oid1 did wid orderline_ctxt in
-                 if wid1=wid && did1=did && cid1=cid && b then
-                    sum acc amt
-                 else acc
-               | _ -> acc)
-   | _ -> acc*)
 
  let rec get_olcnt wid did oid effs = 
    match effs with
@@ -425,71 +277,21 @@ let get_customer_ytd cid cdid cwid =
                 | _ -> acc)
    | _ -> acc
 
- let from_just x = 
-   match x with
-   | Some _ -> true
-   | _ -> false
-
- let process_ireq (*oliid*) olsupplywid olqty latest_nextoid did wid cid ireq = 
-   (*let ireq_ol_i_id = oliid in*)
+ let process_ireq olsupplywid olqty latest_nextoid did wid cid ireq = 
    let ireq_ol_supply_w_id = olsupplywid in
    let ireq_ol_qty = olqty in
-   let price = 3 (*get_price ireq_ol_i_id*) in
+   let price = 3 in
      begin
        Orderline_table.append dummy_olid (Orderline.Add 
         {ol_o_id=latest_nextoid;
          ol_c_id=cid;
          ol_d_id=did; 
          ol_w_id=wid; 
-         (*ol_i_id=ireq_ol_i_id;*) 
          ol_supply_w_id=ireq_ol_supply_w_id; 
          ol_amt=price * ireq_ol_qty;
          ol_delivery_d=(0-1);
          ol_qty=ireq_ol_qty})
      end 
-
-let get_district_ytd_wid wid eff acc = 
-   match eff with
-   | Some x -> 
-     (match x with
-      | District.SetYTD{d_w_id=wid1; d_id = did1; ytd=ytd1} ->
-        (*if wid1=wid then 
-         let ytd1 = get_district_ytd did1 in
-         sum acc ytd1 
-        else acc*)
-        ytd1
-      | _ -> acc)
-   | _ -> acc
-
- let is_in oid x acc = 
-   match x with
-   | Some y -> y=oid && acc
-   | _ -> false
-
- let is_eff_rmneword nord did wid eff = 
-  match eff with
-  | Some x -> match x with
-              | NewOrder.Remove{no_w_id = w_id;no_o_id=o;no_d_id = d_id} ->
-                if did=d_id && o=nord && w_id=wid then true else false
-              | _ -> false
-  | _ -> false
-
- let is_valid_nord nord did wid newords_ctxt = 
-   not (List.exists newords_ctxt (is_eff_rmneword nord did wid))
-
- let get_newordadd_oid wid did newords_ctxt newords_eff = 
-  match newords_eff with
-  | Some x -> 
-    (match x with
-    | NewOrder.Add {no_o_id = oid;no_d_id=d_id; 
-        no_w_id=w_id} ->
-          if w_id = wid && d_id = did then 
-            if is_valid_nord oid did wid newords_ctxt 
-              then Some oid 
-            else None
-          else None
-    | _ -> None)
-  | _ -> None
 
 let get_ol_ids wid did o eff = 
   match eff with
@@ -533,17 +335,16 @@ let rec process_order wid did o oeffs =
        | Order.Add {o_id=oid; o_c_id=ocid; o_w_id=w_id; o_d_id=d_id} ->
            if w_id = wid && d_id = did && o=oid then 
            (let orderline_ctxt = Orderline_table.get dummy_olid (Orderline.Get) in
-            (*let ols = List.map (get_ol_ids wid did o) orderline_ctxt in*)
+            let ols = List.map (get_ol_ids wid did o) orderline_ctxt in
             let amts = List.map (get_olamt wid did o) orderline_ctxt in
             let amt = List.fold_right sum amts 0 in 
-            (*let bal = get_customer_bal ocid did wid in*)
             begin
               (*NewOrder_table.append dummy_noid (NewOrder.Remove{no_w_id = wid;
-                                         no_o_id=o;no_d_id = did});
+                                         no_o_id=o;no_d_id = did});*)
               Order_table.append dummy_oid (Order.SetCarrier {o_id=o;o_w_id=wid;
-                                         o_d_id=did;o_carrier_id=0});*)
-              (*List.iter process_ol ols;*)
-              (*let cbal = sum bal amt in*)
+                                         o_d_id=did;o_carrier_id=0});
+              Orderline_table.append dummy_olid (Orderline.SetDeliveryDate{ol_o_id=o;
+                                         ol_d_id=did;ol_w_id=wid;ol_delivery_d=0});
               Customer_table.append dummy_cid (Customer.AddBal{c_id=ocid;
                                  c_bal=amt; c_d_id=did;c_w_id=wid});
             end)
@@ -551,11 +352,33 @@ let rec process_order wid did o oeffs =
        | _ -> t)
     | _ -> t
 
+let check_delivery_set wid did oid oleff = 
+  match oleff with
+  | Some eff -> 
+    (match eff with
+     | Orderline.SetDeliveryDate{ol_o_id=olx;
+        ol_d_id=did1;ol_w_id=wid1} ->
+      olx=oid && did=did1 && wid1=wid
+     | _ -> false)
+  | _ -> false
+
+let check_carrier_set wid did oid oeff =
+  match oeff with
+  | Some eff ->
+    (match eff with
+     | Order.SetCarrier{o_id=o;o_w_id=wid1;o_d_id=did1} ->
+        o=oid && did=did1 && wid1=wid
+     | _ -> false)
+  | _ -> false
+
 (* <<<<<<<<<<AUXILIARY FUNCTIONS END>>>>>>>>>>>>>>>>*)
 
+(*Txn Consistency: Atomic*)
 let do_new_order_txn did wid cid olqty olsupplywid = 
   let ireqs = [1;2] in
   begin
+    (*TODO: without appending something to key dummy_did
+      we can't do get_latest_nextoid on key dummy_did.*)
     District_table.append dummy_did (District.Dummy);
     let latest_nextoid = get_latest_nextoid did wid in
     District_table.append dummy_did (District.IncNextOID 
@@ -565,29 +388,17 @@ let do_new_order_txn did wid cid olqty olsupplywid =
     Order_table.append dummy_oid (Order.Add 
      {o_id=latest_nextoid; o_w_id=wid; o_d_id=did; 
       o_c_id=cid; o_ol_cnt=(List.length ireqs)});
-    NewOrder_table.append dummy_noid (NewOrder.Add
-    {no_o_id=latest_nextoid; no_w_id=wid; no_d_id=did});
     List.iter (process_ireq olsupplywid olqty 
                latest_nextoid did wid cid) ireqs
   end
-  
+
+(*Txn Consistency: Atomic*)
 let do_payment_txn h_amt did dwid cdid cwid cid =
   begin
-    (*Warehouse_table.append dummy_wid 
-                (Warehouse.AddYTD {w_id = dwid; ytd=h_amt});*)
-    (*let d_ytd = get_district_ytd did dwid in
-    let dytd = sum d_ytd h_amt in
-    District_table.append dummy_did 
-                (District.SetYTD {d_id=did; d_w_id=dwid;ytd=dytd;ts=timestamp});*)
-    (*let c_bal = get_customer_bal cid cdid cwid in
-    let cbal = sub c_bal h_amt in*)
+    Warehouse_table.append dummy_wid 
+                (Warehouse.AddYTD {w_id = dwid; ytd=h_amt});
     Customer_table.append dummy_cid (Customer.AddBal{c_id=cid; c_w_id=cwid; 
     c_d_id=cdid; c_bal=(-1*h_amt)});
-    (*let c_ytd = get_customer_ytd cid cdid cwid in
-    let cytd = sum c_ytd h_amt in
-    Customer_table.append dummy_cid 
-                 (Customer.SetYTDPayment{c_id=cid; c_w_id=cwid; 
-                         c_d_id=cdid; c_ytd_payment=cytd; ts=timestamp});*)
     History_table.append dummy_hid
      (History.Append {h_w_id = dwid; h_d_id = did; 
                       h_c_id = cid; h_c_w_id = cwid; 
@@ -596,21 +407,13 @@ let do_payment_txn h_amt did dwid cdid cwid cid =
 
  (*
  * Delivery transaction.
+   Assumes the order o being processed here is the minimum order id from the
+   new order table to reduce verification complexity.
  *)
+(*Txn Consistency: Atomic*)
 let do_delivery_txn wid did o =
-  (*let ctxt = DistrictCreate_table.get dummy_did DistrictCreate.Get in
-  let dists = List.map (get_did_by_distwarehouse wid) ctxt in
-  List.iter (process_delivery wid) district_ids*)
-  (*let newords_ctxt = NewOrder_table.get dummy_noid NewOrder.Get in
-  let nords = List.map (get_newordadd_oid wid did newords_ctxt) newords_ctxt in
-  let no = min nords in
-  if no > -1 then
-  (
-    let o = no in*)
-    let o_effs = Order_table.get dummy_oid Order.Get in
-    process_order wid did o o_effs
-  (*))
-  else ()*)
+  let o_effs = Order_table.get dummy_oid Order.Get in
+  process_order wid did o o_effs
 
 (*<<<<<<<<<< INVARIANT FUNCTIONS BEGIN >>>>>>>>>>>>>>>>*)
 
@@ -632,21 +435,8 @@ let do_delivery_txn wid did o =
   v1=v2
 
  let inv_new_order_txn (oid:int) did wid =
-  (*inv11 did wid &&*)
+  inv11 did wid &&
   inv12 oid did wid
-
- (* W_YTD = sum(D_YTD) *)
- let inv21 warehouse_ytd wid = 
-   let district_ctxt = District_table.get dummy_did (District.Get) in
-   let v1 = List.fold_right (get_district_ytd_wid wid) district_ctxt 0 in
-   let v2 = warehouse_ytd in
-   v1 = v2
-
- (*D_YTD = sum(H_AMOUNT) *)
- let inv22 did wid history_ctxt =
-   let v1 = get_district_ytd did wid in
-   let v2 = List.fold_right (get_hamt_wdid wid did) history_ctxt 0 in
-   v1 = v2
 
  (*W_YTD = sum(H_AMOUNT)*)
  let inv23 (did:District.id) (wid:Warehouse.id) (warehouse_ytd:int) (history_ctxt: History.eff option list) = 
@@ -657,45 +447,32 @@ let do_delivery_txn wid did o =
  let inv_payment_txn did wid =
   let warehouse_ytd = get_warehouse_ytd wid in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
-  (*inv21 warehouse_ytd wid &&
-  inv22 did wid history_ctxt &&*)
   inv23 did wid warehouse_ytd history_ctxt
 
- (*C_BALANCE = sum(OL_AMOUNT) - sum(H_AMOUNT) *)
+ (*C_BALANCE = sum(OL_AMOUNT) - sum(H_AMOUNT)*)
  let inv31 did wid cid ol_amt cust_bal history_ctxt =  
-  let v1 = (*List.fold_right (get_hamt_wcdid wid cid did) history_ctxt*) 0 in
+  let v1 = List.fold_right (get_hamt_wcdid wid cid did) history_ctxt 0 in
   let v2 = ol_amt in
   let v3 = cust_bal in
   v3=(v2-v1)
-
- (*C_BALANCE + C_YTD_PAYMENT = sum(OL_AMOUNT) *)
- let inv32 did wid cid cust_bal ol_amt orderline_ctxt = 
-  let v1 = get_customer_ytd cid did wid in
-  let v2 = cust_bal in
-  let v3 = ol_amt in 
-  v3 = (sum v1 v2)
 
  let inv_payment_and_delivery_txn (oid:int) cid wid did = 
   let orderline_ctxt = Orderline_table.get dummy_olid (Orderline.Get) in
   let order_ctxt = Order_table.get dummy_oid (Order.Get) in
   let cust_bal = get_customer_bal cid did wid in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
-  (*let ol_amt = List.fold_right (get_olamt_ddatenotnull wid did cid 
-                                     orderline_ctxt) orderline_ctxt 0 in*)
   let ol_amt = List.fold_right (get_olamt_cid wid did cid orderline_ctxt) 
                                                           order_ctxt 0 in
 
-  inv31 did wid cid ol_amt cust_bal history_ctxt(*&&
-  inv32 did wid cid cust_bal ol_amt orderline_ctxt*)
+  inv31 did wid cid ol_amt cust_bal history_ctxt
 
-   (*let inv_delivery_and_neworder_txn (x:int) =
-   (*For any row in the ORDER table, O_CARRIER_ID is set to a null value 
-     if and only if there is a corresponding row in the NEW-ORDER table 
-     defined by (O_W_ID, O_D_ID, O_ID) = (NO_W_ID, NO_D_ID, NO_O_ID).*)
-
-   (*For any row in the ORDER-LINE table, OL_DELIVERY_D is set to a null date/time 
+ (*For any row in the ORDER-LINE table, OL_DELIVERY_D is set to a null date/time 
    if and only if the corresponding row in the ORDER table defined by 
-   (O_W_ID, O_D_ID, O_ID) = (OL_W_ID, OL_D_ID, OL_O_ID) has O_CARRIER_ID set to a null value.*)
-   let order_effs = Order_table.get (0-1) (Order.Get) in
-   (let l1 = List.map (process_order_eff) order_effs in
-   List.fold_right (&&) l1 true)*)
+   (O_W_ID, O_D_ID, O_ID) = (OL_W_ID, OL_D_ID, OL_O_ID) 
+   has O_CARRIER_ID set to a null value.*)
+ let inv_delivery_txn wid did oid =
+   let order_ctxt = Order_table.get dummy_oid (Order.Get) in
+   let orderline_ctxt = Orderline_table.get dummy_olid (Orderline.Get) in
+   if List.exists orderline_ctxt (check_delivery_set wid did oid) 
+   then List.exists order_ctxt (check_carrier_set wid did oid) 
+   else true

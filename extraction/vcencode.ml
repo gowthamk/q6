@@ -173,6 +173,13 @@ let forallE4 f =
     | [w; x; y; z] -> f w x y z | _ -> failwith "Unexpected!!!" in
     forall sorts f' 
 
+let forallE6 f = 
+  let s_Eff = Hashtbl.find tmap Type.eff in
+  let sorts = [s_Eff; s_Eff; s_Eff; s_Eff; s_Eff; s_Eff] in
+  let f' vars = match vars with 
+    | [w; x; y; z; a; b] -> f w x y z a b | _ -> failwith "Unexpected!!!" in
+    forall sorts f' 
+
 let forallId1 f = 
   let s_Id = Hashtbl.find tmap Type.id in
   let sorts = [s_Id] in
@@ -525,7 +532,7 @@ let assert_ba_contracts () =
     mk_and [oper(a) @= wd;
             notsametxn(a,b);
             currtxn(b)] @=> vis(a, b) in
-  let asns = List.map expr_of_quantifier [forallE2 f; 
+  let asns = List.map expr_of_quantifier [(*forallE2 f;*) 
                                           forallE4 g; 
                                           forallE1 h;
                                           forallE2 i] in
@@ -562,11 +569,11 @@ let assert_rubis_contracts () =
     mk_and [oper(a) @= wd;
             notsametxn(a,b);
             currtxn(b)] @=> vis(a, b) in
-  let asns = List.map expr_of_quantifier [forallE2 f; 
+  let asns = List.map expr_of_quantifier [forallE4 f';
+                                          (*forallE2 f;*) 
                                           forallE4 g; 
-                                          forallE4 f';
                                           forallE1 h;
-                                          forallE2 i] in
+                                          (*forallE2 i*)] in
     _assert_all asns
 
 let assert_shcart_contracts () = 
@@ -576,32 +583,32 @@ let assert_shcart_contracts () =
   let cart_rm = const_of_name "Cart_RemoveItemsFromCart" in
   let item_add = const_of_name "Item_AddToStock" in
   let item_rm = const_of_name "Item_RemoveFromStock" in
-  let item_sh = const_of_name "Item_ShowItem" in
-  let cart_sm = const_of_name "Cart_GetCartSummary" in
+  let item_get = const_of_name "Item_ShowItem" in
+  let cart_get = const_of_name "Cart_GetCartSummary" in
   let qty = fun_of_str "qty" in
   let f1 a b =
     mk_and [oper(a) @= cart_rm; 
-            oper(b) @= cart_sm; 
+            oper(b) @= cart_get; 
             txn(b) @= rm; 
             sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
   let f2 a b =
     mk_and [oper(a) @= item_rm; 
-            oper(b) @= item_sh; 
+            oper(b) @= item_get; 
             txn(b) @= add; 
             sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
   let g1 a b c d =
-    mk_and [oper(a) @= item_add; oper(b) @= item_sh; 
+    mk_and [oper(a) @= item_add; oper(b) @= item_get; 
             oper(c) @= item_rm; so(b,c);
             txn(b) @= add; 
             sametxn(b,c); 
-            oper(d) @= item_sh; 
+            oper(d) @= item_get; 
             vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
   let g2 a b c d =
-    mk_and [oper(a) @= cart_add; oper(b) @= cart_sm; 
+    mk_and [oper(a) @= cart_add; oper(b) @= cart_get; 
             oper(c) @= cart_rm; so(b,c);
             txn(b) @= rm; 
             sametxn(b,c); 
-            oper(d) @= cart_sm; 
+            oper(d) @= cart_get; 
             vis(a,b) ; vis(c,d); sameobj(a,d)] @=> vis(a,d) in
   let h a = (mk_app qty [a]) @>= (mk_numeral_i 0) in
   let i1 a b =
@@ -612,10 +619,10 @@ let assert_shcart_contracts () =
     mk_and [oper(a) @= cart_rm;
             notsametxn(a,b);
             currtxn(b)] @=> vis(a, b) in
-  let asns = List.map expr_of_quantifier [forallE2 f1;
+  let asns = List.map expr_of_quantifier [(*forallE2 f1;
                                           forallE2 f2; 
-                                          forallE4 g1; 
-                                          forallE4 g2;
+                                          forallE4 g1;
+                                          forallE4 g2;*)
                                           forallE1 h;
                                           forallE2 i1;
                                           forallE2 i2] in
@@ -624,6 +631,7 @@ let assert_shcart_contracts () =
 let assert_tpcc_contracts () = 
   let nwordtxn = const_of_name "do_new_order_txn" in
   let ptxn = const_of_name "do_payment_txn" in
+  let dtxn = const_of_name "do_delivery_txn" in
   let dget = const_of_name "District_Get" in
   let oget = const_of_name "Order_Get" in
   let olget = const_of_name "Orderline_Get" in
@@ -631,20 +639,26 @@ let assert_tpcc_contracts () =
   let wget = const_of_name "Warehouse_Get" in
   let cget = const_of_name "Customer_Get" in
   let caddbal = const_of_name "Customer_AddBal" in
-  let noget = const_of_name "NewOrder_Get" in
   let dincnoid = const_of_name "District_IncNextOID" in
   let oadd = const_of_name "Order_Add" in
   let oladd = const_of_name "Orderline_Add" in
+  let olsetdel = const_of_name "Orderline_SetDeliveryDate" in
+  let osetcarrier = const_of_name "Order_SetCarrier" in
   let waddytd = const_of_name "Warehouse_AddYTD" in
-  let dsetytd = const_of_name "District_SetYTD" in
   let hadd = const_of_name "History_Append" in
-  let ts = fun_of_str "ts" in
   let oid = fun_of_str "o_id" in
+  let ocid = fun_of_str "o_c_id" in
+  let cid = fun_of_str "c_id" in
+  let cdid = fun_of_str "c_d_id" in
+  let cwid = fun_of_str "c_w_id" in
+  let hcid = fun_of_str "h_c_id" in
+  let hcdid = fun_of_str "h_c_d_id" in
+  let hcwid = fun_of_str "h_c_w_id" in
+  let olid = fun_of_str "ol_o_id" in
+  let oldid = fun_of_str "ol_d_id" in
+  let olwid = fun_of_str "ol_w_id" in
   let odid = fun_of_str "o_d_id" in
   let owid = fun_of_str "o_w_id" in
-  let gt_0_assertions = List.map (fun str -> let f = fun_of_str str in
-                      let h a = (mk_app f [a]) @>= (mk_numeral_i 0) in
-                      forallE1 h) ["ts";"o_id"] in
   let f11 a b c d = 
     mk_and [oper(a)@=dincnoid;
             oper(b)@=oadd;
@@ -697,55 +711,122 @@ let assert_tpcc_contracts () =
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
                                              mk_not(vis(a,c))]] in
-  (*let f12' a b c d = 
+  let f31' a b c d e f =
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
+            (mk_app oid [a]) @= (mk_app olid [b]);
+            oper(c)@=oget;
+            oper(d)@=olget;
+            so(c,d);
+            currtxn(c);
+            sametxn(c,d);
+            oper(e)@=olget;
+            oper(f)@=oget;
+            so(e,f);
+            mk_not(currtxn(e));
+            sametxn(e,f)] @=> (mk_and [vis(a,c);vis(b,d)] @<=>
+                              mk_and [vis(a,f);vis(b,e)]) in
+  let f31'' a b = mk_and 
+                [(mk_app cid [a]) @= (mk_app cid [b]);
+                 (mk_app cdid [a]) @= (mk_app cdid [b]);
+                 (mk_app cwid [a]) @= (mk_app cwid [b])] @=> (a@=b) in
+
+  let f41 a b c d = 
+    mk_and [oper(a)@=osetcarrier;
+            oper(b)@=olsetdel;
             oper(c)@=oget;
             oper(d)@=olget;
             so(a,b);
             so(c,d);
             sameobj(a,c);
-            sameobj(b,d);
-            vis(b,d)] @=> vis(a,c) in*)
-  (*let f2 a b =
-    mk_and [oper(a)@=oadd;
-            oper(b)@=oget;
-            currtxn(a);
-            notsametxn(a,b);
-            sameobj(a,b)] @=> vis(a,b) in*)
-  (*let f12'' a b = 
-    mk_and [oper(a)@=oadd;
-            (*currtxn(a);*)
-            sameobj(a,b);
-            oper(b)@=oget] @=> (sametxn(a,b) @| vis(a,b))  in*)
-  (*let f a b c d =
-    mk_and [mk_or [oper(d) @= dget;
-                   oper(d) @= oget;
-                   oper(d) @= olget;
-                   oper(d) @= hget;
-                   oper(d) @= wget;
-                   oper(d) @= cget;
-                   oper(d) @= noget];
-            so(a,b);vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in*)
-  let g a b = ((mk_app ts [a]) @!= (mk_app ts [b])) @| (a@=b) in
-  (*let h a b = [oper(a) @= oadd;
-               txn(a) @= nwordtxn;
-               oper(b) @= oget] @=> sametxn(a,b) @| vis(a, b) in*)
-  let assertions = List.concat [[(*forallE4 f11;
-                                 forallE2 f11';*)
-                                 (*forallE4 f12;*)
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
+  (*Since we're not dealing with Orderline set delivery date, we need to
+    assert that the delivery transaction only handles one order at a time.*)
+  let f31''' a b c = mk_and
+                [oper(a)@=oadd;
+                 oper(b)@=oadd;
+                 oper(c)@=oget;
+                 txn(c)@=dtxn;
+                 vis(a,c);
+                 vis(b,c)] @=> a@=b in
+  let assertions = List.concat [[forallE4 f11;
+                                 forallE2 f11';
+                                 forallE4 f12;
                                  forallE2 f12';
-                                 (*forallE4 f23;*)
+                                 forallE4 f23;
                                  forallE4 f31;
-
-                                 (*forallE2 f12'';*)
-                                 (*forallE2 f1;
-                                 forallE2 f2;
-                                 forallE2 g;*)
-                                 (*forallE2 h;*)];
-                                 gt_0_assertions] in
+                                 forallE6 f31';
+                                 forallE2 f31'';
+                                 forallE3 f31''';
+                                 forallE4 f41];] in
   let asns = List.map expr_of_quantifier assertions in
     _assert_all asns
+
+let assert_tpce_contracts () =
+  let tget = const_of_name "Trade_Get" in
+  let bget = const_of_name "Broker_Get" in
+  let hget = const_of_name "Holding_Get" in
+  let hsget = const_of_name "HoldingSummary_Get" in
+  let tadd = const_of_name "Trade_AddTrade" in
+  let tcmplt = const_of_name "Trade_SetCmpltAndComm" in
+  let hadd = const_of_name "Holding_AddHolding" in
+  (*let tr_txn = const_of_name "do_trade_order_res_txn" in*)
+  let hsaddqty = const_of_name "HoldingSummary_AddHoldingQty" in
+  let bincnum = const_of_name "Broker_AddCommision" in
+  let baddcomm = const_of_name "Broker_AddCommision" in
+  let tid = fun_of_str "t_id" in
+  let f1 a b c d = 
+    mk_and [oper(a)@=tcmplt;
+            oper(b)@=bincnum;
+            oper(c)@=tget;
+            oper(d)@=bget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
+  let f1' a b c =
+    mk_and [oper(a)@=tadd;
+            oper(b)@=tget;
+            currtxn(b);
+            sameobj(a,b);
+            oper(c)@=tget;
+            sameobj(a,c);
+            notsametxn(a,c);
+            vis(a,b)] @=> vis(a,c) in
+  let f1'' a b =
+    mk_and [mk_app tid [a]@=mk_app tid [b]; 
+            oper(a)@=oper(b);
+            oper(a)@=tadd] @=> a@=b in
+  let f1''' a b =
+    mk_and [oper(a)@=tcmplt;
+            oper(b)@=tget;
+            sameobj(a,b)] @=> sametxn(a,b) @| vis(a,b) in
+  let f2 a b c d = 
+    mk_and [oper(a)@=tcmplt;
+            oper(b)@=baddcomm;
+            oper(c)@=tget;
+            oper(d)@=bget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
+  let f3 a b c d = 
+    mk_and [oper(a)@=hsaddqty;
+            oper(b)@=hadd;
+            oper(c)@=hsget;
+            oper(d)@=hget;
+            so(a,b);
+            so(c,d);
+            sameobj(a,c);
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
+  let asns = List.map expr_of_quantifier [forallE4 f1;
+                                          forallE3 f1';
+                                          forallE2 f1'';
+                                          forallE2 f1''';
+                                          forallE4 f2;
+                                          forallE4 f3] in
+     _assert_all asns
+
 
 let mk_cc op = 
   let f a b = mk_and [oper(b)@=op;
@@ -759,7 +840,7 @@ let mk_sc op op_list =
       mk_and [mk_or op_cond;
         oper(b)@=op;
         sameobj(a, b)] @=> 
-        vis(a, b) @| vis(b, a) (*@| (a@=b)*) in
+        vis(a, b) @| vis(b, a) @| (a@=b) in
   forallE2 f
 
 let assert_paxos_contracts () = 
@@ -803,7 +884,7 @@ let assert_paxos_contracts () =
                                        forallE2 f1]] in
   _assert_all asns
 
-let assert_contracts () = assert_tpcc_contracts ()
+let assert_contracts () = assert_tpce_contracts ()
 
 (*
 let assert_contracts () = ()

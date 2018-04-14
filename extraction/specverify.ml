@@ -437,9 +437,9 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
         let _ = Hashtbl.add unmanifest_list_map 
                    (fname, args(*_str*)) res_v in
           (S.Var res_v, {env with te = xte}) in
-    match (env.is_inv, res_ty) with
+   (*) match (env.is_inv, res_ty) with
       | (false, Type.Bool) -> abstract_fun_app ()
-      | _ -> 
+      | _ ->*) 
             try 
               let (body_sv,xenv') = doIt_expr xenv fun_t.body in 
               let (pe',body_sv') = P.simplify xenv'.pe body_sv in
@@ -493,30 +493,26 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                 try ret @@ S.Var (Ident.create @@ 
                                    List.assoc name pervasives) 
                 with Not_found ->  
-                  if name="get_all" then
-                    doIt_get_all env
-                  else 
-                    if String.sub name 0 5="dummy" then
-                      if Hashtbl.mem dummy_id_map "dummy" then
-                        ret @@ Hashtbl.find dummy_id_map "dummy"
-                      else 
-                        let new_uuid = Ident.create @@ fresh_uuid_name () in
-                        let _ = printf "Created1 %s\n" (Ident.name new_uuid) in
-                        let uuids = match KE.find_name "UUID" env.ke with
-                          | Kind.Extendible prev -> !prev
-                          | _ -> failwith "UUID Unexpected" in
-                        let ke' = KE.add (Ident.create "UUID")
-                                    (Kind.Extendible (ref @@ new_uuid::uuids))
-                                    env.ke in
-                        let sv = S.Var new_uuid in
-                        let _ = Hashtbl.add dummy_id_map "dummy" sv in
-                        (sv, {env with ke=ke'})
+                  if String.sub name 0 5="dummy" then
+                    if Hashtbl.mem dummy_id_map "dummy" then
+                      ret @@ Hashtbl.find dummy_id_map "dummy"
                     else 
-                      if name="timestamp" then 
-                        let res_v = Ident.create @@ fresh_name () in 
-                        let xte = TE.add res_v Type.Int env.te in
-                        (S.Var res_v, {env with te = xte})
-                      else failwith @@ name^" not found\n"
+                      let new_uuid = Ident.create @@ fresh_uuid_name () in
+                      let uuids = match KE.find_name "UUID" env.ke with
+                        | Kind.Extendible prev -> !prev
+                        | _ -> failwith "UUID Unexpected" in
+                      let ke' = KE.add (Ident.create "UUID")
+                                  (Kind.Extendible (ref @@ new_uuid::uuids))
+                                  env.ke in
+                      let sv = S.Var new_uuid in
+                      let _ = Hashtbl.add dummy_id_map "dummy" sv in
+                      (sv, {env with ke=ke'})
+                  else 
+                    if name="timestamp" then 
+                      let res_v = Ident.create @@ fresh_name () in 
+                      let xte = TE.add res_v Type.Int env.te in
+                      (S.Var res_v, {env with te = xte})
+                    else failwith @@ name^" not found\n"
           end
     (* constant *)
     | Texp_constant const ->
@@ -1001,7 +997,7 @@ let get_obtypes opers =
         else acc) opers []
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 9 (* k'*) in
+  let _ = k := 10 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -1022,10 +1018,11 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                       (S.Var rid)::svs)) repl_list (te, []) in  
   let _ = repl_svs := replsvs in
   (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
-  (*let txn_list = ["do_bid_for_item"; "do_withdraw_wallet"] in*)
-  let txn_list = [(*"do_payment_txn";*)"do_delivery_txn"] in
-  (*let txn_list = ["do_addItemsToCart";"do_removeItemsFromCart"] in*)
-  (*let txn_list = ["do_prepare"] in*)
+  (*let txn_list = [(*"do_bid_for_item";*) "do_withdraw_wallet"] in*)
+  (*let txn_list = ["do_new_order_txn"(*;"do_payment_txn";"do_delivery_txn"*)] in*)
+  let txn_list = ["do_trade_res_txn"] in
+  (*let txn_list = [(*"do_addItemsToCart";*)"do_removeItemsFromCart"] in*)
+  (*let txn_list = ["do_new_tweet"] in*)
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
   let ssn2 = fresh_ssn () in
   let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in
@@ -1064,7 +1061,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in*)
-  let tmp_name2 = "inv_payment_and_delivery_txn" in
+  let tmp_name2 = "inv_fun2" in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name2)
                      (invs)
@@ -1148,7 +1145,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                         (*comm_assertions;*)
                         [currtxn_assertion1];
                         [currtxn_assertion2];
-                        (*[int_comm_assertions];*)
+                        [int_comm_assertions];
                         (mk_ssn_cstr ssn2 effs2 ::
                         (List.map (fun ssn1 -> mk_ssn_cstr ssn1 effs1) ssn_list))]
     end in
