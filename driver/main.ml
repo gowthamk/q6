@@ -51,7 +51,7 @@ let process_file ppf name =
   else
     raise(Arg.Bad("don't know what to do with " ^ name))
 
-let usage = "Usage: ocamlc <options> <files>\nOptions are:"
+let usage = "Usage: q6 <options> <files>\nOptions are:"
 
 let ppf = Format.err_formatter
 
@@ -80,6 +80,9 @@ module Options = Main_args.Make_bytecomp_options (struct
   let _absname = set Location.absname
   let _annot = set annotations
   let _binannot = set binary_annotations
+  let _k k = bmc_bound := k
+  let _f s = fn_to_verify := Some s
+  let _p s = inv_fn := Some s
   let _c = set compile_only
   let _cc s = c_compiler := Some s
   let _cclib s = ccobjs := Misc.rev_split_words s @ !ccobjs

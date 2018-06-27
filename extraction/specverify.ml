@@ -69,7 +69,7 @@ let printf = Printf.printf
 (* 
  * BMC bound
  *)
-let k =ref 2 (* will be overridden in doIt *)
+let k = Clflags.bmc_bound
 let eff_consts = ref [] (* will be overridden in doIt *)
 let oper_consts = ref [] (* will be overridden in doIt *)
 let objtype_consts = ref [] (* will be overridden in doIt *)
@@ -997,7 +997,6 @@ let get_obtypes opers =
         else acc) opers []
 
 let doIt (ke,te,pe,ve) rdt_spec k' = 
-  let _ = k := 10 (* k'*) in
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -1020,7 +1019,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
   (*let txn_list = [(*"do_bid_for_item";*) "do_withdraw_wallet"] in*)
   (*let txn_list = ["do_new_order_txn"(*;"do_payment_txn";"do_delivery_txn"*)] in*)
-  let txn_list = ["do_trade_res_txn"] in
+  let txn_list = [from_just @@ !Clflags.fn_to_verify] in
   (*let txn_list = [(*"do_addItemsToCart";*)"do_removeItemsFromCart"] in*)
   (*let txn_list = ["do_new_tweet"] in*)
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
@@ -1061,7 +1060,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in*)
-  let tmp_name2 = "inv_fun2" in
+  let tmp_name2 = from_just @@ !Clflags.inv_fn in
   let my_fun2 = try List.find (fun (Fun.T x) -> 
                             Ident.name x.name = tmp_name2)
                      (invs)

@@ -884,7 +884,7 @@ let assert_paxos_contracts () =
                                        forallE2 f1]] in
   _assert_all asns
 
-let assert_contracts () = assert_tpce_contracts ()
+let assert_contracts () = assert_mb_contracts ()
 
 (*
 let assert_contracts () = ()
