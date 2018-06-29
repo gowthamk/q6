@@ -104,7 +104,7 @@ let implementation ppf sourcefile outputprefix =
     let conc_vcs = match (rdt_spec,env) with 
       | (Some rdt_spec, Some (ke,te,ve)) -> 
           let open Specverify in 
-            Some (doIt (ke,te,[],ve) rdt_spec 2)
+            Some (doIt (ke,te,[],ve) rdt_spec)
       | _ -> None  in
     let _ = match conc_vcs with 
       | Some conc_vcs -> Some (VCE.doIt conc_vcs)

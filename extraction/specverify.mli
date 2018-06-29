@@ -4,5 +4,4 @@ module VC = Vc
 
 type env_t = (KE.t * TE.t * Predicate.t list * VE.t)
 
-val doIt : env_t  -> Rdtspec.t -> int -> (Ident.t (* fun name *) * 
-                                          VC.t) list
+val doIt : env_t  -> Rdtspec.t -> (Ident.t (* fun name *) * VC.t) list

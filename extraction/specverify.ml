@@ -879,17 +879,23 @@ let doIt_fun (env: env) (Fun.T {name;args_t;body}) =
     List.map (fun (id,tyd) -> 
                 (id, type_of_tye env.ke (Misc.to_tye tyd))) 
       args_t in
-  let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
-              env.te args_tys in
+  let te' = List.fold_left 
+      (fun te (id,ty) -> 
+         try
+           let old_ty = TE.find_name (Ident.name id) te in
+           failwith @@ (Ident.name id)^" occurs twice. \
+              Previously with type: "^(Type.to_string old_ty)
+         with Not_found -> TE.add id ty te)
+      env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'} body in
-  let (pe',body_sv') = P.simplify env'.pe body_sv in
+  let (pe',_) = P.simplify env'.pe body_sv in
   let diff_te = env'.te -- env.te in
   let st = (diff_te, pe', P.of_sv @@ S.ConstBool true) in
     begin
       (*Printf.printf "------- Symbolic Trace (%s) -----\n" 
         (Ident.name name);
       VC.print_seq st;*)
-      (body_sv', {env' with pe=pe'}, [st])
+      ({env' with pe=pe'})
     end
 
 let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
@@ -897,7 +903,13 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
     List.map (fun (id,tyd) -> 
                 (id, type_of_tye env.ke (Misc.to_tye tyd))) 
       args_t in
-  let te' = List.fold_left (fun te (id,ty) -> TE.add id ty te)
+  let te' = List.fold_left 
+      (fun te (id,ty) -> 
+        try
+           let old_ty = TE.find_name (Ident.name id) te in
+           failwith @@ (Ident.name id)^" occurs twice. \
+              Previously with type: "^(Type.to_string old_ty)
+         with Not_found -> TE.add id ty te)
               env.te args_tys in
   let (body_sv,env') = doIt_expr {env with te=te'; is_inv=true} body in
   let (pe',body_sv') = P.simplify env'.pe body_sv in
@@ -906,7 +918,7 @@ let doIt_inv (env: env) (Fun.T {name;args_t;body}) =
     begin
       (*Printf.printf "---- VC (%s) ----\n" (Ident.name name);
       VC.print_seq vc;*)
-      (body_sv', {env' with pe=pe'}, [vc])
+      (body_sv', {env' with pe=pe'})
     end
 
 let get_arg_condition (oper) (eff1) (eff2) (schemas) : S.t list = 
@@ -996,7 +1008,35 @@ let get_obtypes opers =
           then objtyp_name::acc
         else acc) opers []
 
-let doIt (ke,te,pe,ve) rdt_spec k' = 
+(*
+let doIt_funs (ke,te,pe,ve) (txns : Fun.t list) =
+  let env0 = {txn=Fun.anonymous; seqno=0; 
+              ssn=L.txn_nop; ke=ke; te=te;
+              pe=pe; path=[]; ve=ve; 
+              is_inv = false;
+              show=(fun eff -> S.ConstBool true);
+              effs=[];} in
+  (*
+   * Since each function is verified in isolation, we  start with a
+   * fresh environment in each case.
+   *)
+  let (env1', vcs1) = List.fold_left (fun (env, vcs) (Fun.T txn) ->
+                        let ssn = fresh_ssn () in
+                        let env' = {env with txn=Fun.name txn;ssn=ssn} in
+                        let (body_sv, env2', vcs2') = doIt_fun env' my_fun1 in
+                        (*let _ = printf "----- Body SV ------\n" in
+                        let _ = P.print (P.of_sv body_sv) in
+                        let _ = printf "--------------------\n" in*)
+                          (env2', vcs@vcs2')) (env1, []) txns in
+  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
+  (* Printing program preds *)
+  (*let _ = printf "--- Txn Preds ----\n" in
+  let _ = List.iteri 
+            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
+            List.concat wr_prog_list in*)
+*)
+
+let doIt (ke,te,pe,ve) rdt_spec = 
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -1016,17 +1056,13 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                     (TE.add rid Type.uuid te, 
                       (S.Var rid)::svs)) repl_list (te, []) in  
   let _ = repl_svs := replsvs in
-  (*let txn_list = ["do_proposal_response";"do_promise_response";"do_accept"] in*)
-  (*let txn_list = [(*"do_bid_for_item";*) "do_withdraw_wallet"] in*)
-  (*let txn_list = ["do_new_order_txn"(*;"do_payment_txn";"do_delivery_txn"*)] in*)
-  let txn_list = [from_just @@ !Clflags.fn_to_verify] in
-  (*let txn_list = [(*"do_addItemsToCart";*)"do_removeItemsFromCart"] in*)
-  (*let txn_list = ["do_new_tweet"] in*)
+  let txn_list = match !Clflags.fn_to_verify with
+                 | Some fn -> [fn] 
+                 | None -> [] in (*TODO: fixme *)
   let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
   let ssn2 = fresh_ssn () in
   let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in
   let ke = KE.add (Ident.create "Eff") 
-                  (* An additional NOP effect for technical reasons *)
                   (Kind.Enum (!eff_consts@[L.e_nop])) ke in
   let txn_te = List.fold_right (fun ssn te -> TE.add ssn Type.ssn te) ssn_list te in
   let te = TE.add ssn2 Type.ssn txn_te in
@@ -1042,19 +1078,16 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                 show=(fun eff -> S.ConstBool true);
                 effs=[];} in
   let nm_ssn_list = List.combine txn_list ssn_list in
-  let (env1', vcs1) = List.fold_left (fun (env, vcs) (tmp_name, ssn) ->
+  let (axns, env1') = List.fold_left (fun (axns, env) (tmp_name, ssn) ->
                         let my_fun1 = try List.find (fun (Fun.T x) -> 
                                                   Ident.name x.name = tmp_name)
                                            (writes)
                                      with Not_found -> not_found @@ tmp_name
                                           ^" function not found" in
-                        let env' = {env with txn=Fun.name my_fun1;ssn=ssn} in
-                        let (body_sv, env2', vcs2') = doIt_fun env' my_fun1 in
-                        (*let _ = printf "----- Body SV ------\n" in
-                        let _ = P.print (P.of_sv body_sv) in
-                        let _ = printf "--------------------\n" in*)
-                          (env2', vcs@vcs2')) (env1, []) nm_ssn_list in
-  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
+                        let env' = doIt_fun {env with txn=Fun.name my_fun1;
+                                                      ssn=ssn} my_fun1 in
+                        (axns@[env'.pe], env')) ([],env1) nm_ssn_list in
+  let wr_prog_list = axns in
   (* Printing program preds *)
   (*let _ = printf "--- Txn Preds ----\n" in
   let _ = List.iteri 
@@ -1071,6 +1104,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
       {env1 with txn=Fun.name my_fun2; 
                  is_inv=true;
                  ke=env1'.ke; 
+                 te=env1'.te;
                  ssn=ssn2;
                  show=(fun e -> 
                          DelayedITE(is_pre, 
@@ -1078,14 +1112,16 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                                     S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
                                                  S.Var ssn1))) ssn_list),
                                     S.ConstBool true))} in
-  let (_, env2'(*{ke,effs} used*), vcs2) = doIt_inv env2 my_fun2 in
-  let [(te2,inv_prog,inv)] = vcs2 in
+  let (inv_sv, env2') = doIt_inv env2 my_fun2 in
+  let inv = P.of_sv inv_sv in
+  let inv_prog = env2'.pe in
+  (* let [(te2,inv_prog,inv)] = vcs2 in *)
   (* Printing invariant program preds *)
   (*let _ = printf "--- Inv Fn Preds ----\n" in
   let _ = List.iteri 
             (fun i p -> printf "%d.\n" i; P.print p) 
             inv_prog in*)
-  let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in
+  (*let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in*)
   (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
     match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
       | _ -> failwith "Specverify.doIt: Unexpected" in*)
@@ -1155,6 +1191,7 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
     end in
   (*let _ = printf "--- Postcondition ----\n" in
   let _ = P.print post in*)
+  (*
   let new_te_list = List.map (fun te1 -> 
                       TE.fold_name 
                          (fun id ty te -> 
@@ -1164,7 +1201,8 @@ let doIt (ke,te,pe,ve) rdt_spec k' =
                                           duplicate found. Please rename.")*)
                             with Not_found -> TE.add id ty te) te2 te1) te_list  in
   let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
-  let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=te++new_te; 
+   *)
+  let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=env2'.te (* te++new_te*); 
                                 pre=pre; prog=prog; post=post} in
   let _ = printf "Symbolic Execution took: %fs\n" (Sys.time() -. t) in
   let _ = flush_all () in
