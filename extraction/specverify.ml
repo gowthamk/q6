@@ -66,10 +66,34 @@ let pervasive_app id args = match args with
 
 let printf = Printf.printf
 
+(*
+ * "Fresh" utility functions.
+ *)
+let fresh_eff_name = gen_name "!e"
+let fresh_name = gen_name "!v"
+let fresh_uuid_name = gen_name "!uuid"
+let fresh_ssn_name = gen_name "!ssn_"
+let fresh_ssn () = Ident.create @@ fresh_ssn_name ()
+
 (* 
  * BMC bound
  *)
 let k = Clflags.bmc_bound
+(* 
+ * This flag is set before invariant predicate is grounded for
+ * precondition. It is unset when the predicate is grounded for
+ * postcondition 
+ *)
+let is_pre = ref true 
+(*
+ * txn_ssn refers to the session of the transaction being verified.
+ * This is overridden in doIt before grounding. If not overridden,
+ * Z3 checking fails because this session is undefined.
+ *)
+let txn_ssn = ref (Ident.create "UNDEF")
+(*
+ * This is all Kapil's doing.
+ *)
 let eff_consts = ref [] (* will be overridden in doIt *)
 let oper_consts = ref [] (* will be overridden in doIt *)
 let objtype_consts = ref [] (* will be overridden in doIt *)
@@ -106,7 +130,31 @@ let (--) te1 te2 =
          with Not_found -> TE.add id typ diff_te)
       te1 TE.empty
 
-let (++) te1 te2 = TE.fold_name TE.add te2 te1
+
+let merge_tes te te1 te2 = 
+  let diff_te2 = te2 -- te in
+  let te' = TE.fold_name 
+      (fun id ty te -> 
+         try
+           let name = Ident.name id in
+           let ty' = TE.find_name name te in
+           if ty <> ty' then
+             failwith @@ name^" occurs twice. Please rename."
+           else te
+         with Not_found -> TE.add id ty te) 
+      diff_te2 te1 in
+  te'
+
+(*
+ * The only typedefs that change are Extendible typedefs, which are
+ * in-place updated. So, we simply return the latest ke.
+ *)
+let merge_kes ke ke1 ke2 = ke2
+
+(*
+ * PE merge is basically set union. 
+ *)
+let merge_pes pe pe1 pe2 = pe @ pe1 @ pe2
 
 let doIt_under_grd env grd doIt = 
   let grdp = P.of_sv grd in
@@ -183,11 +231,6 @@ let rec type_of_tye ke (tye : type_expr) =
 
 let map_snd_opts = List.map (function (_,Some x) -> x
                                | _ -> failwith "Unexpected")
-let fresh_eff_name = gen_name "!e"
-let fresh_name = gen_name "!v"
-let fresh_uuid_name = gen_name "!uuid"
-let fresh_ssn_name = gen_name "!ssn_"
-let fresh_ssn () = Ident.create @@ fresh_ssn_name ()
 
 let mk_new_effect env (sv1(* eff id *),ty1(* eff id ty *)) sv2 =
   let y = Ident.create @@ fresh_eff_name () in
@@ -499,14 +542,13 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
                     else 
                       let new_uuid = Ident.create @@ fresh_uuid_name () in
                       let uuids = match KE.find_name "UUID" env.ke with
-                        | Kind.Extendible prev -> !prev
+                        | Kind.Extendible prev -> prev
                         | _ -> failwith "UUID Unexpected" in
-                      let ke' = KE.add (Ident.create "UUID")
-                                  (Kind.Extendible (ref @@ new_uuid::uuids))
-                                  env.ke in
+                      (* KE in-place updated *)
+                      let _ = uuids := new_uuid::(!uuids) in
                       let sv = S.Var new_uuid in
                       let _ = Hashtbl.add dummy_id_map "dummy" sv in
-                      (sv, {env with ke=ke'})
+                      (sv, env)
                   else 
                     if name="timestamp" then 
                       let res_v = Ident.create @@ fresh_name () in 
@@ -605,12 +647,11 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
               let new_uuid = Ident.create @@ fresh_uuid_name () in
               let _ = printf "Created %s\n" (Ident.name new_uuid) in
               let uuids = match KE.find_name "UUID" env.ke with
-                | Kind.Extendible prev -> !prev
+                | Kind.Extendible prev -> prev
                 | _ -> failwith "UUID Unexpected" in
-              let ke' = KE.add (Ident.create "UUID")
-                          (Kind.Extendible (ref @@ new_uuid::uuids))
-                          env.ke in
-                (S.Var new_uuid, {env with ke=ke'})
+              (* KE in-place updated *)
+              let _ = uuids := new_uuid::(!uuids) in
+                (S.Var new_uuid, env)
           | S.Var id when (is_pervasive id) -> 
               (pervasive_app id sv2s, env'')
           | S.Var id -> (S.App (id,sv2s), env'')
@@ -1009,122 +1050,62 @@ let get_obtypes opers =
         else acc) opers []
 
 (*
-let doIt_funs (ke,te,pe,ve) (txns : Fun.t list) =
-  let env0 = {txn=Fun.anonymous; seqno=0; 
-              ssn=L.txn_nop; ke=ke; te=te;
-              pe=pe; path=[]; ve=ve; 
-              is_inv = false;
-              show=(fun eff -> S.ConstBool true);
-              effs=[];} in
-  (*
-   * Since each function is verified in isolation, we  start with a
-   * fresh environment in each case.
-   *)
-  let (env1', vcs1) = List.fold_left (fun (env, vcs) (Fun.T txn) ->
-                        let ssn = fresh_ssn () in
-                        let env' = {env with txn=Fun.name txn;ssn=ssn} in
-                        let (body_sv, env2', vcs2') = doIt_fun env' my_fun1 in
-                        (*let _ = printf "----- Body SV ------\n" in
-                        let _ = P.print (P.of_sv body_sv) in
-                        let _ = printf "--------------------\n" in*)
-                          (env2', vcs@vcs2')) (env1, []) txns in
-  let wr_prog_list = List.map (fun (_,wr_prog,_) -> wr_prog) vcs1 in
-  (* Printing program preds *)
-  (*let _ = printf "--- Txn Preds ----\n" in
-  let _ = List.iteri 
-            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
-            List.concat wr_prog_list in*)
-*)
+ * Make environment for a given function.
+ *)
+let mk_env_for_fun (ke,te,pe,ve) (Fun.T fn) = 
+  let ssn = fresh_ssn () in
+  let te' = TE.add ssn Type.ssn te in
+    {txn=fn.name; seqno=0; ssn=ssn; 
+     ke=ke; te=te'; pe=pe; path=[]; ve=ve; 
+     is_inv = false; effs=[];
+     show=(fun eff -> S.ConstBool true); }
 
-let doIt (ke,te,pe,ve) rdt_spec = 
-  let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
-                                  Gc.space_overhead = 200} in
-  let t = Sys.time() in
-  let _ = eff_consts := 
-          List.tabulate !k (fun i -> 
-                              Ident.create @@ "E"^(string_of_int i)) in
-  let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
-  let oper_cons = extract_oper_cons schemas in
-  let _ = oper_consts := oper_cons in
-  let _ = objtype_consts := get_obtypes oper_cons in
-  (* Add svs for replicas *)
-  let repl_list = match KE.find_name "ReplId" ke with
-                  | Kind.Enum x -> x
-                  | _ -> failwith "ReplID not found in KE" in
-  let (te, replsvs) = List.fold_right 
-                  (fun r (te, svs) -> let rid = Ident.create @@ fresh_name () in
-                    (TE.add rid Type.uuid te, 
-                      (S.Var rid)::svs)) repl_list (te, []) in  
-  let _ = repl_svs := replsvs in
-  let txn_list = match !Clflags.fn_to_verify with
-                 | Some fn -> [fn] 
-                 | None -> [] in (*TODO: fixme *)
-  let _ = Printf.printf "Number of transactions: %d\n" (List.length txn_list) in
-  let ssn2 = fresh_ssn () in
-  let ssn_list = List.map (fun txn -> fresh_ssn ()) txn_list in
-  let ke = KE.add (Ident.create "Eff") 
-                  (Kind.Enum (!eff_consts@[L.e_nop])) ke in
-  let txn_te = List.fold_right (fun ssn te -> TE.add ssn Type.ssn te) ssn_list te in
-  let te = TE.add ssn2 Type.ssn txn_te in
-  let tmp_name1 = List.hd txn_list in
-  let my_fun1 = try List.find (fun (Fun.T x) -> 
-                                          Ident.name x.name = tmp_name1)
-                                   (writes)
-                             with Not_found -> not_found @@ tmp_name1 in
-  let env1 = {txn=Fun.name my_fun1; seqno=0; 
-                ssn=List.hd ssn_list; ke=ke; te=te;
-                pe=pe; path=[]; ve=ve; 
-                is_inv = false;
-                show=(fun eff -> S.ConstBool true);
-                effs=[];} in
-  let nm_ssn_list = List.combine txn_list ssn_list in
-  let (axns, env1') = List.fold_left (fun (axns, env) (tmp_name, ssn) ->
-                        let my_fun1 = try List.find (fun (Fun.T x) -> 
-                                                  Ident.name x.name = tmp_name)
-                                           (writes)
-                                     with Not_found -> not_found @@ tmp_name
-                                          ^" function not found" in
-                        let env' = doIt_fun {env with txn=Fun.name my_fun1;
-                                                      ssn=ssn} my_fun1 in
-                        (axns@[env'.pe], env')) ([],env1) nm_ssn_list in
-  let wr_prog_list = axns in
+(*
+ * Make enviroment for all invariants
+ *)
+let mk_env_for_inv (ke,te,pe,ve) = 
+  let ssn = fresh_ssn () in
+  let te' = TE.add ssn Type.ssn te in
+    {txn=L.generic_inv; 
+     seqno=0; ssn=ssn;
+     ke=ke; te=te'; pe=pe; path=[]; ve=ve; 
+     is_inv = true; effs=[];
+     show=fun e -> 
+            DelayedITE(is_pre, 
+              S.And [S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
+                                  S.DelayedVar txn_ssn))],
+              S.ConstBool true);}
+
+(*
+ * Since each function is verified in isolation, Each function gets
+ * its own env.
+ *)
+let doIt_funs envs (txns : Fun.t list) : env list =
+  let env's = List.map2
+      (fun env txn -> doIt_fun env txn) envs txns in
   (* Printing program preds *)
   (*let _ = printf "--- Txn Preds ----\n" in
   let _ = List.iteri 
             (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
             List.concat wr_prog_list in*)
-  let tmp_name2 = from_just @@ !Clflags.inv_fn in
-  let my_fun2 = try List.find (fun (Fun.T x) -> 
-                            Ident.name x.name = tmp_name2)
-                     (invs)
-               with Not_found -> not_found @@ tmp_name2
-                    ^" function not found" in
-  let is_pre = ref false in
-  let env2 = 
-      {env1 with txn=Fun.name my_fun2; 
-                 is_inv=true;
-                 ke=env1'.ke; 
-                 te=env1'.te;
-                 ssn=ssn2;
-                 show=(fun e -> 
-                         DelayedITE(is_pre, 
-                                    S.And (List.map (fun ssn1 -> 
-                                    S.Not (S.Eq (S.App (L.ssn, [S.Var e]),
-                                                 S.Var ssn1))) ssn_list),
-                                    S.ConstBool true))} in
-  let (inv_sv, env2') = doIt_inv env2 my_fun2 in
-  let inv = P.of_sv inv_sv in
-  let inv_prog = env2'.pe in
-  (* let [(te2,inv_prog,inv)] = vcs2 in *)
-  (* Printing invariant program preds *)
-  (*let _ = printf "--- Inv Fn Preds ----\n" in
-  let _ = List.iteri 
-            (fun i p -> printf "%d.\n" i; P.print p) 
-            inv_prog in*)
-  (*let te_list = List.map (fun (te1, _, _) -> te1) vcs1 in*)
-  (*let ((te1,wr_prog,_),(te2,inv_prog,inv)) = 
-    match (vcs1,vcs2) with | ([st1;st2],[inv_vc]) -> (st1,inv_vc)
-      | _ -> failwith "Specverify.doIt: Unexpected" in*)
+  env's
+
+(*
+ * Since all invariants are verified for each function, we assume that
+ * all invariants belong to the same (witness) session, hence env is
+ * iterated. The invariant predicates may be checked one at a time.
+ *)
+let doIt_invs env (invs: Fun.t list) : P.t list * env =
+  let (inv_preds, env') = List.map_fold_left
+      (fun env inv_fn -> 
+        let (body_sv,env') = doIt_inv env inv_fn in
+          (P.of_sv body_sv, env')) env invs in
+  (inv_preds,env')
+
+let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_preds = 
+  let ke' = merge_kes ke env1'.ke env2'.ke in
+  let te' = merge_tes te env1'.te env2'.te in
+  let pe' = merge_pes pe env1'.pe env2'.pe in
   let (effs1, effs2) = (env1'.effs, env2'.effs) in
   let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
   let currtxn_assertion1 = 
@@ -1144,6 +1125,7 @@ let doIt (ke,te,pe,ve) rdt_spec =
       let same_op_cond = S.And (eq_cond :: cond_for_op) in
       let or_list = List.map (fun op -> S.Eq (S.App (L.oper, [S.Var eff2]), op)) ops in
       P.of_sv (S.Or (same_op_cond::or_list)) in
+
   let rec comm_assertion eff1 eff2 opers = 
     match opers with
     | x::xs -> if (List.length xs) > 0 
@@ -1153,57 +1135,113 @@ let doIt (ke,te,pe,ve) rdt_spec =
         else [P._if (P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff1]), x), 
                      P.of_sv @@ S.Eq (S.App (L.oper, [S.Var eff2]), x))]
     | _ -> [] in 
+  let oper_cons = extract_oper_cons schemas in
+  let _ = oper_consts := oper_cons in
+  let _ = objtype_consts := get_obtypes oper_cons in
   let int_comm_assertions = gen_int_comm_assertions oper_cons schemas in
   let comm_assertions = List.flatten @@ List.mapi 
       (fun i eff -> if i<(!k-1) 
         then comm_assertion eff 
                 (List.nth !eff_consts (i+1)) oper_cons 
         else []) !eff_consts in
-  let mk_ssn_cstr ssn_id effs = 
-      P.forall Type.eff 
-        (fun v -> 
-           P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
-                                   S.Var ssn_id), 
-                  P.of_sv @@ in_set v @@ List.rev effs)) in
+  (*
+   * Define ssn domains.
+   *)
+  let (txn_ssn_cstr, inv_ssn_cstr) = 
+    let txn_ssn = env1'.ssn in
+    let inv_ssn = env2'.ssn in
+    let mk_ssn_cstr ssn_id effs = 
+        P.forall Type.eff 
+          (fun v -> 
+             P._if (P.of_sv @@ S.Eq (S.App (L.ssn, [S.Var v]), 
+                                     S.Var ssn_id), 
+                    P.of_sv @@ in_set v @@ List.rev effs)) in
+      (mk_ssn_cstr txn_ssn effs1, mk_ssn_cstr inv_ssn effs2) in
+  (*
+   * Ground the predicates generated
+   *)
+  let _ = txn_ssn := env1'.ssn in
   let pre = 
     begin
       is_pre := true;
-      P.ground inv
+      List.map P.ground inv_preds
     end in
   (*let _ = printf "--- Precondition ----\n" in
   let _ = P.print pre in*)
-  let prog = 
+  let exec = 
     begin
       is_pre := false;
-      List.map P.ground @@ List.concat @@ 
-        wr_prog_list @ [inv_prog; 
-                        (*comm_assertions;*)
-                        [currtxn_assertion1];
-                        [currtxn_assertion2];
-                        [int_comm_assertions];
-                        (mk_ssn_cstr ssn2 effs2 ::
-                        (List.map (fun ssn1 -> mk_ssn_cstr ssn1 effs1) ssn_list))]
+      (List.map P.ground pe') @ [currtxn_assertion1; 
+                                 currtxn_assertion2; 
+                                 int_comm_assertions; 
+                                 inv_ssn_cstr;
+                                 txn_ssn_cstr;]
     end in
   let post = 
     begin
       is_pre := false;
-      P.ground inv
+      List.map P.ground inv_preds
     end in
   (*let _ = printf "--- Postcondition ----\n" in
   let _ = P.print post in*)
-  (*
-  let new_te_list = List.map (fun te1 -> 
-                      TE.fold_name 
-                         (fun id ty te -> 
-                            try (ignore @@ TE.find_name (Ident.name id) te; 
-                                  raise Not_found)
-                                 (*failwith @@ (Ident.name id)^" variable \
-                                          duplicate found. Please rename.")*)
-                            with Not_found -> TE.add id ty te) te2 te1) te_list  in
-  let new_te = List.fold_right (fun te acc -> acc++te) (List.tl new_te_list) (List.hd new_te_list) in
-   *)
-  let conc_vc = let open VC in {kbinds=env2'.ke; tbinds=env2'.te (* te++new_te*); 
-                                pre=pre; prog=prog; post=post} in
+  let open VC in 
+  {txn=env1'.txn; kbinds=ke'; tbinds=te'; pre=pre; exec=exec; post=post}
+
+let doIt (ke,te,pe,ve) rdt_spec = 
+  let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
+                                  Gc.space_overhead = 200} in
+  let t = Sys.time() in
+  let _ = eff_consts := 
+          List.tabulate !k (fun i -> 
+                              Ident.create @@ "E"^(string_of_int i)) in
+  let Rdtspec.T {schemas; reads; writes; invs; aux} = rdt_spec in
+  (* Add svs for replicas *)
+  let repl_list = match KE.find_name "ReplId" ke with
+                  | Kind.Enum x -> x
+                  | _ -> failwith "ReplID not found in KE" in
+  let (te, replsvs) = List.fold_right 
+                  (fun r (te, svs) -> let rid = Ident.create @@ fresh_name () in
+                    (TE.add rid Type.uuid te, 
+                      (S.Var rid)::svs)) repl_list (te, []) in  
+  let _ = repl_svs := replsvs in
+  let txn_list = match !Clflags.fn_to_verify with
+                 | Some fn -> 
+                     begin try
+                       [List.find (fun (Fun.T {name}) -> 
+                                    Ident.name name = fn)
+                           writes]
+                     with Not_found ->
+                       failwith @@ fn^" not found!" 
+                     end
+                 | None -> writes in 
+  let _ = Printf.printf "Number of transactions: %d\n" 
+            (List.length txn_list) in
+  let ke = KE.add (Ident.create "Eff") 
+                  (Kind.Enum (!eff_consts@[L.e_nop])) ke in
+  let env1s = List.map (fun t -> mk_env_for_fun (ke,te,[],ve) t)
+                       txn_list in
+  let env1's = doIt_funs env1s txn_list in
+  (* Printing program preds *)
+  (*let _ = printf "--- Txn Preds ----\n" in
+  let _ = List.iteri 
+            (fun i p -> Printf.printf "%d.\n" i; P.print p) @@
+            List.concat wr_prog_list in*)
+  let inv_list = match !Clflags.inv_fn with
+                 | Some fn -> 
+                     begin try
+                       [List.find (fun (Fun.T {name}) -> 
+                                    Ident.name name = fn) 
+                           invs]
+                     with Not_found ->
+                       failwith @@ fn^" not found!" 
+                     end
+                 | None -> invs in 
+  let env2 = mk_env_for_inv (ke,te,[],ve) in
+  let (inv_preds, env2') = doIt_invs env2 inv_list in
+  let conc_vcs = List.map (fun env1' -> 
+                            mk_conc_vc schemas (ke,te,pe) 
+                              env1' env2' inv_preds) 
+                          env1's in
   let _ = printf "Symbolic Execution took: %fs\n" (Sys.time() -. t) in
   let _ = flush_all () in
-    [(Fun.name my_fun1, conc_vc)]
+    conc_vcs

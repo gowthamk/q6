@@ -120,6 +120,7 @@ struct
   let e_nop = Ident.create "_ENOP"
   let ssn_nop = Ident.create "ssn_nop"
   let txn_nop = Ident.create "txn_nop"
+  let generic_inv = Ident.create "invariant"
 end
 
 module rec Fun : sig
@@ -160,6 +161,7 @@ end
 and SymbolicVal : sig
   type t = Bot
     | Var of Ident.t
+    | DelayedVar of Ident.t ref (* resolved at the time of grounding *)
     | App of Ident.t * t list
     | Eq of t * t
     | Gt of t * t
@@ -179,7 +181,7 @@ and SymbolicVal : sig
     | Record of (Ident.t * t) list
     | EffCons of Cons.t (* Effect Constructor; to store in TE *)
     | NewEff of Cons.t * t option
-    | DelayedITE of bool ref * t * t (* resolved only when necesary. *)
+    | DelayedITE of bool ref * t * t (* resolved when grounding. *)
   val to_string : t -> string 
   val print : (< get : unit -> string; inc : unit -> 'a; .. > as 'a) ->
               t -> unit
@@ -196,6 +198,7 @@ and SymbolicVal : sig
 end = struct
   type t = Bot
     | Var of Ident.t
+    | DelayedVar of Ident.t ref
     | App of Ident.t * t list
     | Eq of t * t
     | Gt of t * t
@@ -222,6 +225,7 @@ end = struct
     let g x = "("^(f x)^")" in
       match x with
         | Var id -> Ident.name id
+        | DelayedVar idref -> Ident.name !idref
         | App (id,svs) -> (Ident.name id)^"("
             ^(String.concat "," @@ List.map f svs)^")"
         | Eq (sv1,sv2) -> (f sv1)^" = "^(f sv2)
@@ -303,6 +307,7 @@ end = struct
         end in
       match x with 
         | Var id -> prints @@ Ident.name id
+        | DelayedVar idref -> prints @@ Ident.name !idref
         | App (id,svs) ->  prints @@ (Ident.name id)^"("
             ^(String.concat "," @@ List.map f svs)^")"
         | Eq (sv1,sv2) -> print_bin "=" (sv1,sv2)
@@ -496,6 +501,7 @@ end = struct
     let f = ground in
     let g = List.map f in 
       match v with 
+        | DelayedVar idref -> Var !idref
         | App (id,svs) -> App (id,g svs)
         | Eq (v1,v2) -> Eq (f v1, f v2)
         | Gt (v1,v2) -> Gt (f v1, f v2)
@@ -506,7 +512,7 @@ end = struct
         | List (svs,s) -> List (g svs,s)
         | ITE (v1,v2,v3) -> ITE (f v1, f v2, f v3)
         | Record flds -> Record (List.map (fun (id,v) -> (id,f v)) flds)
-        | DelayedITE (x,v1,v2) -> if !x then v1 else v2
+        | DelayedITE (x,v1,v2) -> if !x then f v1 else f v2
         | _ -> v
 
   (*let ground v = simplify [] @@ ground v*)

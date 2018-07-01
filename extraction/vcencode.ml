@@ -104,6 +104,8 @@ let mk_sub es = mk_sub !ctx es
 let mk_mul es = mk_mul !ctx es
 let _assert e = Solver.add !solver [e]
 let _assert_all e = Solver.add !solver e
+let push () = Solver.push !solver
+let pop () = Solver.pop !solver 1
 let check_sat () = Solver.check !solver []
 
 let (@=>) e1 e2 = mk_implies !ctx e1 e2
@@ -951,6 +953,11 @@ let assert_const name =
   let s_pred = Hashtbl.find cmap name in
   _assert s_pred
 
+let assert_consts names = 
+  let s_preds = List.map (Hashtbl.find cmap) names in
+  let conj = mk_and s_preds in
+  _assert conj
+
 let assert_prog prog = 
   _assert_all @@ List.map doIt_pred prog
 
@@ -958,45 +965,70 @@ let assert_neg_const name =
   let s_pred = Hashtbl.find cmap name in
   _assert (mk_not s_pred)
 
-let discharge (txn_id, vc) = 
+exception VerificationFailure
+
+let discharge vc = 
   let open VC in
-  let vc_name = "VC_"^(Ident.name txn_id)(*fresh_vc_name ()*) in
+  let txn_id = vc.txn in
+  let vc_name = "VC_"^(Ident.name txn_id) in
   let out_chan = open_out @@ vc_name^".z3" in
+  let pres = List.mapi (fun i _ -> 
+                    Printf.sprintf "pre_%d" i) vc.pre in
+  let posts = List.mapi (fun i _ -> 
+                    Printf.sprintf "post_%d" i) vc.post in
     begin
       declare_types (vc.kbinds, vc.tbinds);
       declare_vars vc.tbinds;
       assert_axioms vc.kbinds;
       assert_contracts ();
-      assert_prog vc.prog;
-      declare_pred "pre" vc.pre;
-      declare_pred "post" vc.post;
-      assert_const "pre";
-      assert_neg_const "post";
+      assert_prog vc.exec;
+      (* declare_pred "pre" (List.hd vc.pre); *)
+      List.iter2 declare_pred pres vc.pre;
+      assert_consts pres;
+      List.iter2 declare_pred posts vc.post;
       output_string out_chan @@ Solver.to_string !solver;
-      output_string out_chan "(check-sat)\n";
-      output_string out_chan "(get-model)\n";
-      printf "Context printed in %s.z3\n" vc_name;
-      flush_all ();
-      Printf.printf "Time before execution of check_sat: %fs\n" (Sys.time());
-      check_sat ()
+      (*
+       * Discharge post conditions one at a time.
+       *)
+      List.iteri (fun i post -> 
+        (*
+         * First print what's being done
+         *)
+        output_string out_chan "(push)\n";
+        output_string out_chan @@
+                               "  (assert (not "^post^"))\n";
+        output_string out_chan "  (check-sat)\n";
+        output_string out_chan "  (get-model)\n";
+        output_string out_chan "(pop)\n";
+        flush_all();
+        printf "Context printed in %s.z3\n" vc_name;
+        printf "Time before execution of \
+                check_sat#%d: %fs\n" i (Sys.time());
+        (*
+         * Then do that
+         *)
+        push();
+        assert_neg_const post;
+        match check_sat () with
+          | UNSATISFIABLE ->  printf "UNSAT\n"
+          | SATISFIABLE -> raise VerificationFailure
+          | UNKNOWN -> failwith "Z3 timed out. Please increase \
+                                 the timeout!"
+        printf "Time after execution of \
+                check_sat#%d: %fs\n" i (Sys.time());
+        pop();) posts;
     end
 
 let doIt vcs = 
   if not (Log.open_ "z3.log") then
     failwith "Log couldn't be opened."
   else
-    let _ = List.map (fun vc ->
-      let res = discharge vc in
-      let _ = reset () in
-      begin
-        (match res with 
-          | SATISFIABLE -> printf "SAT\n"
-          | UNSATISFIABLE -> 
-              printf "Verified!\n" 
-                (*(Ident.name @@ fst @@ vc)*)
-          | UNKNOWN -> printf "UNKNOWN\n");
-        Printf.printf "Disposing...\n";
-        Printf.printf "Time after execution of check_sat: %fs\n" (Sys.time());
-      end
-    ) vcs in
-    Gc.full_major ()
+    List.iter (fun vc ->
+      try
+        discharge vc;
+        printf "Verified!\n";
+        Printf.printf "Resetting...\n";
+        reset ();
+        Gc.full_major ();
+      with VerificationFailure -> 
+        failwith "Verification failed!") vcs

@@ -8,6 +8,7 @@ sig
   val take : int -> 'a list -> 'a list
   val distinct_pairs: 'a list -> ('a*'a) list
   val cross_product : 'a list -> 'b list -> ('a*'b) list
+  val split2: ('a * 'b * 'c) list -> ('a list * 'b list * 'c list)
 end =
 struct
   include List
@@ -42,6 +43,12 @@ struct
     | ([],_) | (_,[]) -> []
     | (x::xs,_) -> (map (fun y -> (x,y)) l2) @ 
                    (cross_product xs l2)
+
+  let rec split2 l = match l with
+    | [] -> ([],[],[])
+    | (x,y,z)::l' -> 
+        let (xs,ys,zs) = split2 l' in
+        (x::xs, y::ys, z::zs)
 
 end
 
