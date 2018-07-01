@@ -434,9 +434,9 @@ let do_delivery_txn wid did o =
   let v2 = List.fold_right (get_ol_rows_cnt oid did wid) orderline_ctxt 0 in
   v1=v2
 
- let inv_new_order_txn (oid:int) did wid =
-  inv11 did wid &&
-  inv12 oid did wid
+ let inv_new_order_txn (oid1:int) did1 wid1 =
+  inv11 did1 wid1 &&
+  inv12 oid1 did1 wid1
 
  (*W_YTD = sum(H_AMOUNT)*)
  let inv23 (did:District.id) (wid:Warehouse.id) (warehouse_ytd:int) (history_ctxt: History.eff option list) = 
@@ -444,10 +444,10 @@ let do_delivery_txn wid did o =
    let v2 = List.fold_right (get_hamt_wid wid) history_ctxt 0 in
    v1 = v2
 
- let inv_payment_txn did wid =
-  let warehouse_ytd = get_warehouse_ytd wid in
+ let inv_payment_txn did2 wid2 =
+  let warehouse_ytd = get_warehouse_ytd wid2 in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
-  inv23 did wid warehouse_ytd history_ctxt
+  inv23 did2 wid2 warehouse_ytd history_ctxt
 
  (*C_BALANCE = sum(OL_AMOUNT) - sum(H_AMOUNT)*)
  let inv31 did wid cid ol_amt cust_bal history_ctxt =  
@@ -456,23 +456,22 @@ let do_delivery_txn wid did o =
   let v3 = cust_bal in
   v3=(v2-v1)
 
- let inv_payment_and_delivery_txn (oid:int) cid wid did = 
+ let inv_payment_and_delivery_txn (oid3:int) cid3 wid3 did3 = 
   let orderline_ctxt = Orderline_table.get dummy_olid (Orderline.Get) in
   let order_ctxt = Order_table.get dummy_oid (Order.Get) in
-  let cust_bal = get_customer_bal cid did wid in
+  let cust_bal = get_customer_bal cid3 did3 wid3 in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
-  let ol_amt = List.fold_right (get_olamt_cid wid did cid orderline_ctxt) 
+  let ol_amt = List.fold_right (get_olamt_cid wid3 did3 cid3 orderline_ctxt) 
                                                           order_ctxt 0 in
-
-  inv31 did wid cid ol_amt cust_bal history_ctxt
+  inv31 did3 wid3 cid3 ol_amt cust_bal history_ctxt
 
  (*For any row in the ORDER-LINE table, OL_DELIVERY_D is set to a null date/time 
    if and only if the corresponding row in the ORDER table defined by 
    (O_W_ID, O_D_ID, O_ID) = (OL_W_ID, OL_D_ID, OL_O_ID) 
    has O_CARRIER_ID set to a null value.*)
- let inv_delivery_txn wid did oid =
+ let inv_delivery_txn wid4 did4 oid4 =
    let order_ctxt = Order_table.get dummy_oid (Order.Get) in
    let orderline_ctxt = Orderline_table.get dummy_olid (Orderline.Get) in
-   if List.exists orderline_ctxt (check_delivery_set wid did oid) 
-   then List.exists order_ctxt (check_carrier_set wid did oid) 
+   if List.exists orderline_ctxt (check_delivery_set wid4 did4 oid4) 
+   then List.exists order_ctxt (check_carrier_set wid4 did4 oid4) 
    else true

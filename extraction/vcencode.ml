@@ -886,7 +886,7 @@ let assert_paxos_contracts () =
                                        forallE2 f1]] in
   _assert_all asns
 
-let assert_contracts () = assert_mb_contracts ()
+let assert_contracts () = assert_tpcc_contracts ()
 
 (*
 let assert_contracts () = ()
@@ -927,7 +927,7 @@ let rec doIt_sv sv =
       | _ -> failwith @@ "doIt_sv: Unimpl. "^(S.to_string sv)
 
 let rec doIt_pred p = match p with
-  | P.BoolExpr v -> let _ = S.print S.empty_indent v in doIt_sv v
+  | P.BoolExpr v -> doIt_sv v
   | P.If (t1,t2) -> (doIt_pred t1) @=> (doIt_pred t2)
   | P.Iff (t1,t2) -> (doIt_pred t1) @<=> (doIt_pred t2)
   | P.Forall (ty,f) -> expr_of_quantifier @@
@@ -987,6 +987,7 @@ let discharge vc =
       assert_consts pres;
       List.iter2 declare_pred posts vc.post;
       output_string out_chan @@ Solver.to_string !solver;
+        printf "SMT VCs printed in %s.z3\n" vc_name;
       (*
        * Discharge post conditions one at a time.
        *)
@@ -994,6 +995,7 @@ let discharge vc =
         (*
          * First print what's being done
          *)
+        printf "\tChecking postcondition #%d... " i;
         output_string out_chan "(push)\n";
         output_string out_chan @@
                                "  (assert (not "^post^"))\n";
@@ -1001,21 +1003,17 @@ let discharge vc =
         output_string out_chan "  (get-model)\n";
         output_string out_chan "(pop)\n";
         flush_all();
-        printf "Context printed in %s.z3\n" vc_name;
-        printf "Time before execution of \
-                check_sat#%d: %fs\n" i (Sys.time());
         (*
          * Then do that
          *)
         push();
         assert_neg_const post;
         match check_sat () with
-          | UNSATISFIABLE ->  printf "UNSAT\n"
-          | SATISFIABLE -> raise VerificationFailure
+          | UNSATISFIABLE ->  printf "Passed\n"
+          | SATISFIABLE -> (printf "Failed!\n"; 
+                            raise VerificationFailure)
           | UNKNOWN -> failwith "Z3 timed out. Please increase \
                                  the timeout!"
-        printf "Time after execution of \
-                check_sat#%d: %fs\n" i (Sys.time());
         pop();) posts;
     end
 
@@ -1023,12 +1021,18 @@ let doIt vcs =
   if not (Log.open_ "z3.log") then
     failwith "Log couldn't be opened."
   else
+    let t1 = Sys.time () in
     List.iter (fun vc ->
       try
+        printf "Verifying %s... \n" 
+          (let open VC in Ident.name vc.txn);
         discharge vc;
-        printf "Verified!\n";
-        Printf.printf "Resetting...\n";
+        printf "%s Verified!\n" 
+                (Ident.name vc.txn);
+        (*Printf.printf "Resetting...\n";*)
         reset ();
         Gc.full_major ();
       with VerificationFailure -> 
-        failwith "Verification failed!") vcs
+        failwith "Verification failed!") vcs;
+    let t2 = Sys.time () in
+    printf "Verification took %fs\n" (t2-.t1);
