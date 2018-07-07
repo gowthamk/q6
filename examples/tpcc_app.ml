@@ -217,19 +217,19 @@ let get_warehouse_ytd dwid =
   let whs_effs = Warehouse_table.get dummy_wid (Warehouse.Get) in
   List.fold_right (get_waddytd dwid) whs_effs 0
 
-let get_caddbal cid cdid cwid eff1 acc = 
+let get_caddbal cid cdid cwid eff1 = 
   match eff1 with 
   | Some y -> (match y with 
              | Customer.AddBal {c_id=cid1; c_w_id=wid1; 
                                  c_d_id=did1;c_bal=bal} -> 
-                if cid1=cid && wid1=cwid && did1=cdid then 
-                  sum acc bal else acc                 
-             | _ -> acc)
-  | _ -> acc
+                if cid1=cid && wid1=cwid && did1=cdid 
+                then bal else 0
+             | _ -> 0)
+  | _ -> 0 
 
 let get_customer_bal (cid:Customer.id) (cdid:District.id) (cwid:Warehouse.id) =
   let c_effs = Customer_table.get dummy_cid (Customer.Get) in
-  List.fold_right (get_caddbal cid cdid cwid) c_effs 0
+  List.fold_right sum (List.map (get_caddbal cid cdid cwid) c_effs) 0
 
  let get_hamt_wid wid eff acc = 
    match eff with
@@ -303,19 +303,18 @@ let get_ol_ids wid did o eff =
     | _ -> None)
   | _ -> None
 
-let get_olamt_cid wid did cid orderline_ctxt oeff acc =
+let get_olamt_cid wid did cid orderline_ctxt oeff =
   match oeff with
   | Some x -> 
       (match x with 
        | Order.Add {o_id=oid; o_c_id=ocid; o_w_id=w_id; o_d_id=d_id} ->
           if w_id = wid && d_id = did && ocid=cid then
-          (let amts = List.map (get_olamt wid did oid) orderline_ctxt in
-           let amt = List.fold_right sum amts 0 in 
-           sum acc amt)
-          else acc
-       | _ -> acc) 
-  | _ -> acc
-
+            let amts = List.map (get_olamt wid did oid) orderline_ctxt in
+            let amt = List.fold_right sum amts 0 in 
+            amt
+          else 0
+       | _ -> 0) 
+  | _ -> 0
 
 let process_ol ol did wid =  
   match ol with
@@ -461,8 +460,9 @@ let do_delivery_txn wid did o =
   let order_ctxt = Order_table.get dummy_oid (Order.Get) in
   let cust_bal = get_customer_bal cid3 did3 wid3 in
   let history_ctxt = History_table.get dummy_hid (History.Get) in
-  let ol_amt = List.fold_right (get_olamt_cid wid3 did3 cid3 orderline_ctxt) 
-                                                          order_ctxt 0 in
+  let ol_amt = List.fold_right sum 
+                (List.map (get_olamt_cid wid3 did3 
+                             cid3 orderline_ctxt) order_ctxt) 0 in
   inv31 did3 wid3 cid3 ol_amt cust_bal history_ctxt
 
  (*For any row in the ORDER-LINE table, OL_DELIVERY_D is set to a null date/time 
