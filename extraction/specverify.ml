@@ -1061,12 +1061,12 @@ let mk_env_for_fun (ke,te,pe,ve) (Fun.T fn) =
      show=(fun eff -> S.ConstBool true); }
 
 (*
- * Make enviroment for all invariants
+ * Make enviroment for a given invariant.
  *)
-let mk_env_for_inv (ke,te,pe,ve) = 
+let mk_env_for_inv (ke,te,pe,ve) (Fun.T fn)= 
   let ssn = fresh_ssn () in
   let te' = TE.add ssn Type.ssn te in
-    {txn=L.generic_inv; 
+    {txn=fn.name;
      seqno=0; ssn=ssn;
      ke=ke; te=te'; pe=pe; path=[]; ve=ve; 
      is_inv = true; effs=[];
@@ -1095,14 +1095,14 @@ let doIt_funs envs (txns : Fun.t list) : env list =
  * all invariants belong to the same (witness) session, hence env is
  * iterated. The invariant predicates may be checked one at a time.
  *)
-let doIt_invs env (invs: Fun.t list) : P.t list * env =
-  let (inv_preds, env') = List.map_fold_left
-      (fun env inv_fn -> 
-        let (body_sv,env') = doIt_inv env inv_fn in
-          (P.of_sv body_sv, env')) env invs in
-  (inv_preds,env')
+let doIt_invs envs (invs: Fun.t list) : (P.t * env) list =
+  List.map2 
+    (fun env txn -> 
+      let (body_sv,env') = doIt_inv env txn in
+      (P.of_sv body_sv,env')) 
+    envs invs
 
-let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_preds = 
+let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_pred = 
   let ke' = merge_kes ke env1'.ke env2'.ke in
   let te' = merge_tes te env1'.te env2'.te in
   let pe' = merge_pes pe env1'.pe env2'.pe in
@@ -1161,11 +1161,8 @@ let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_preds =
    * Ground the predicates generated
    *)
   let _ = txn_ssn := env1'.ssn in
-  let pre = 
-    begin
-      is_pre := true;
-      List.map P.ground inv_preds
-    end in
+  let pre = (is_pre := true; 
+             P.ground inv_pred) in
   (*let _ = printf "--- Precondition ----\n" in
   let _ = P.print pre in*)
   let exec = 
@@ -1177,15 +1174,13 @@ let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_preds =
                                  inv_ssn_cstr;
                                  txn_ssn_cstr;]
     end in
-  let post = 
-    begin
-      is_pre := false;
-      List.map P.ground inv_preds
-    end in
+  let post = (is_pre := false; 
+              P.ground inv_pred) in
   (*let _ = printf "--- Postcondition ----\n" in
   let _ = P.print post in*)
   let open VC in 
-  {txn=env1'.txn; kbinds=ke'; tbinds=te'; pre=pre; exec=exec; post=post}
+  {txn=env1'.txn; inv=env2'.txn; kbinds=ke'; 
+   tbinds=te'; pre=pre; exec=exec; post=post}
 
 let doIt (ke,te,pe,ve) rdt_spec = 
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
@@ -1236,12 +1231,13 @@ let doIt (ke,te,pe,ve) rdt_spec =
                        failwith @@ fn^" not found!" 
                      end
                  | None -> invs in 
-  let env2 = mk_env_for_inv (ke,te,[],ve) in
-  let (inv_preds, env2') = doIt_invs env2 inv_list in
-  let conc_vcs = List.map (fun env1' -> 
-                            mk_conc_vc schemas (ke,te,pe) 
-                              env1' env2' inv_preds) 
-                          env1's in
-  let _ = printf "Symbolic Execution took: %fs\n" (Sys.time() -. t) in
+  let env2s = List.map (fun t -> mk_env_for_inv (ke,te,[],ve) t) 
+                      inv_list in
+  let inv_pred_env2's = doIt_invs env2s inv_list in
+  let conc_vcs = List.map 
+      (fun (env1',(inv_pred, env2')) -> 
+         mk_conc_vc schemas (ke,te,pe) env1' env2' inv_pred) @@ 
+      List.cross_product env1's inv_pred_env2's in
+  let _ = printf "Symbolic Execution took %fs\n" (Sys.time() -. t) in
   let _ = flush_all () in
     conc_vcs

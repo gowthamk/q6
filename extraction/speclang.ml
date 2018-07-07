@@ -120,7 +120,7 @@ struct
   let e_nop = Ident.create "_ENOP"
   let ssn_nop = Ident.create "ssn_nop"
   let txn_nop = Ident.create "txn_nop"
-  let generic_inv = Ident.create "invariant"
+  (*let generic_inv = Ident.create "invariant"*)
 end
 
 module rec Fun : sig

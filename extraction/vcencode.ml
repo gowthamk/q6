@@ -630,6 +630,15 @@ let assert_shcart_contracts () =
                                           forallE2 i2] in
     _assert_all asns
 
+let atomic txn_name = 
+  let this_txn = const_of_name txn_name in
+  forallE3 @@ fun a b c -> 
+    mk_and [txn a @= this_txn; 
+            txn b @= this_txn;
+            txn c @!= this_txn;
+            vis(a,c);
+            sameobj(b,c)] @=> vis(b,c)
+
 let assert_tpcc_contracts () = 
   let nwordtxn = const_of_name "do_new_order_txn" in
   let ptxn = const_of_name "do_payment_txn" in
@@ -661,7 +670,7 @@ let assert_tpcc_contracts () =
   let olwid = fun_of_str "ol_w_id" in
   let odid = fun_of_str "o_d_id" in
   let owid = fun_of_str "o_w_id" in
-  let f11 a b c d = 
+  (*let f11 a b c d = 
     mk_and [oper(a)@=dincnoid;
             oper(b)@=oadd;
             oper(c)@=dget;
@@ -671,12 +680,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d);] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                       mk_and [mk_not(vis(b,d));
-                                              mk_not(vis(a,c))]] in
+                                              mk_not(vis(a,c))]] in*)
   let f11' a b =
     mk_and [oper(a) @= dincnoid; 
             oper(b) @= dget; 
             sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
-  let f12 a b c d = 
+  (*let f12 a b c d = 
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
             oper(c)@=oget;
@@ -686,12 +695,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in
+                                             mk_not(vis(a,c))]] in*)
   let f12' a b = mk_and 
                   [(mk_app oid [a]) @= (mk_app oid [b]);
                    (mk_app odid [a]) @= (mk_app odid [b]);
                    (mk_app owid [a]) @= (mk_app owid [b])] @=> (a@=b) in
-  let f23 a b c d = 
+  (*let f23 a b c d = 
     mk_and [oper(a)@=waddytd;
             oper(b)@=hadd;
             oper(c)@=wget;
@@ -701,8 +710,8 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in
-  let f31 a b c d = 
+                                             mk_not(vis(a,c))]] in*)
+  (*let f31 a b c d = 
     mk_and [oper(a)@=caddbal;
             oper(b)@=hadd;
             oper(c)@=cget;
@@ -712,7 +721,7 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in
+                                             mk_not(vis(a,c))]] in*)
   let f31' a b c d e f =
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
@@ -733,7 +742,7 @@ let assert_tpcc_contracts () =
                  (mk_app cdid [a]) @= (mk_app cdid [b]);
                  (mk_app cwid [a]) @= (mk_app cwid [b])] @=> (a@=b) in
 
-  let f41 a b c d = 
+  (*let f41 a b c d = 
     mk_and [oper(a)@=osetcarrier;
             oper(b)@=olsetdel;
             oper(c)@=oget;
@@ -741,7 +750,7 @@ let assert_tpcc_contracts () =
             so(a,b);
             so(c,d);
             sameobj(a,c);
-            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in*)
   (*Since we're not dealing with Orderline set delivery date, we need to
     assert that the delivery transaction only handles one order at a time.*)
   let f31''' a b c = mk_and
@@ -751,16 +760,16 @@ let assert_tpcc_contracts () =
                  txn(c)@=dtxn;
                  vis(a,c);
                  vis(b,c)] @=> a@=b in
-  let assertions = List.concat [[forallE4 f11;
+  let assertions = List.concat [[atomic "do_new_order_txn"(*forallE4 f11*);
                                  forallE2 f11';
-                                 forallE4 f12;
+                                 (*forallE4 f12;*)
                                  forallE2 f12';
-                                 forallE4 f23;
-                                 forallE4 f31;
+                                 atomic "do_payment_txn"(*forallE4 f23*);
+                                 (*forallE4 f31;*)
                                  forallE6 f31';
                                  forallE2 f31'';
                                  forallE3 f31''';
-                                 forallE4 f41];] in
+                                 atomic "do_delivery_txn"(*forallE4 f41*)];] in
   let asns = List.map expr_of_quantifier assertions in
     _assert_all asns
 
@@ -966,73 +975,95 @@ let assert_neg_const name =
   _assert (mk_not s_pred)
 
 exception VerificationFailure
+exception InvalidCtxt
 
 let discharge vc = 
   let open VC in
   let txn_id = vc.txn in
-  let vc_name = "VC_"^(Ident.name txn_id) in
-  let out_chan = open_out @@ vc_name^".z3" in
+  let inv_id = vc.inv in
+  let vc_name = (Ident.name txn_id)^"_" ^(Ident.name inv_id) in
+  let out_chan = open_out @@ "VCs/"^vc_name^".z3" in
+  let pre_preds = match vc.pre with
+    | P.BoolExpr (S.And ps) -> List.map P.of_sv ps
+    | p -> [p] in
+  let post_preds = match vc.post with
+    | P.BoolExpr (S.And ps) -> List.map P.of_sv ps
+    | p -> [p] in
   let pres = List.mapi (fun i _ -> 
-                    Printf.sprintf "pre_%d" i) vc.pre in
+                    Printf.sprintf "pre_%d" i) pre_preds in
   let posts = List.mapi (fun i _ -> 
-                    Printf.sprintf "post_%d" i) vc.post in
+                    Printf.sprintf "post_%d" i) post_preds in
     begin
       declare_types (vc.kbinds, vc.tbinds);
       declare_vars vc.tbinds;
       assert_axioms vc.kbinds;
       assert_contracts ();
       assert_prog vc.exec;
-      (* declare_pred "pre" (List.hd vc.pre); *)
-      List.iter2 declare_pred pres vc.pre;
+      List.iter2 declare_pred pres pre_preds;
       assert_consts pres;
-      List.iter2 declare_pred posts vc.post;
+      List.iter2 declare_pred posts post_preds;
       output_string out_chan @@ Solver.to_string !solver;
-        printf "SMT VCs printed in %s.z3\n" vc_name;
+      (* printf "SMT VCs printed in %s.z3\n" vc_name; *)
+      (* printf "Checking the sanity of the context ...";*)
+      begin (* <IO> *)
+        output_string out_chan "(check-sat)\n";
+        printf ".";
+        flush_all();
+      end; (* </IO> *)
+      (match check_sat () with
+        | SATISFIABLE -> ()
+        | UNSATISFIABLE -> raise InvalidCtxt
+        | UNKNOWN -> failwith "Z3 timed out. Please increase \
+             the time limit!");
       (*
-       * Discharge post conditions one at a time.
+       * Discharge post conditions
        *)
       List.iteri (fun i post -> 
-        (*
-         * First print what's being done
-         *)
-        printf "\tChecking postcondition #%d... " i;
-        output_string out_chan "(push)\n";
-        output_string out_chan @@
-                               "  (assert (not "^post^"))\n";
-        output_string out_chan "  (check-sat)\n";
-        output_string out_chan "  (get-model)\n";
-        output_string out_chan "(pop)\n";
-        flush_all();
-        (*
-         * Then do that
-         *)
+        begin (* <IO> *)
+          (*printf "\tChecking postcondition #%d... " i;*)
+          output_string out_chan "(push)\n";
+          output_string out_chan @@
+                                 "  (assert (not "^post^"))\n";
+          output_string out_chan "  (check-sat)\n";
+          output_string out_chan "  (get-model)\n";
+          output_string out_chan "(pop)\n";
+          printf ".";
+          flush_all();
+        end; (* </IO> *)
         push();
         assert_neg_const post;
-        match check_sat () with
-          | UNSATISFIABLE ->  printf "Passed\n"
-          | SATISFIABLE -> (printf "Failed!\n"; 
-                            raise VerificationFailure)
+        (match check_sat () with
+          | UNSATISFIABLE -> ()
+          | SATISFIABLE -> raise VerificationFailure
           | UNKNOWN -> failwith "Z3 timed out. Please increase \
-                                 the timeout!"
+                          the time limit!");
         pop();) posts;
     end
 
 let doIt vcs = 
-  if not (Log.open_ "z3.log") then
-    failwith "Log couldn't be opened."
-  else
-    let t1 = Sys.time () in
-    List.iter (fun vc ->
-      try
-        printf "Verifying %s... \n" 
-          (let open VC in Ident.name vc.txn);
+  let _ = if not (Log.open_ "z3.log")
+          then failwith "Log couldn't be opened." in
+  let _ = try Unix.mkdir "VCs" 0o777 
+          with Unix.Unix_error(Unix.EEXIST,_,_) -> () in
+  let t1 = Sys.time () in
+  let _ = List.fold_left (fun prev_txn vc ->
+    let open VC in
+    let cur_txn = Ident.name vc.txn in
+    let inv = Ident.name vc.inv in
+    begin
+      (try
+        if prev_txn <> cur_txn
+        then printf "%s\n" cur_txn;
+        printf "\t● %s" inv;
         discharge vc;
-        printf "%s Verified!\n" 
-                (Ident.name vc.txn);
-        (*Printf.printf "Resetting...\n";*)
-        reset ();
-        Gc.full_major ();
-      with VerificationFailure -> 
-        failwith "Verification failed!") vcs;
-    let t2 = Sys.time () in
-    printf "Verification took %fs\n" (t2-.t1);
+        printf "  ✔\n";
+      with 
+        | VerificationFailure -> printf "  ✘\n"
+        | InvalidCtxt -> printf "  k↑↻\n");
+      flush_all ();
+      reset ();
+      Gc.full_major ();
+      cur_txn;
+    end) "" vcs in
+  let t2 = Sys.time () in
+  printf "Verification took %fs\n" (t2-.t1);

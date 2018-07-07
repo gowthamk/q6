@@ -214,25 +214,25 @@ let do_trade_res_txn (tid:Trade.id) acct_id trade_qty trade_price comm_rate brok
 
 (*<<<<<<<<<< INVARIANT FUNCTIONS BEGIN >>>>>>>>>>>>>>>>*)
 
-let inv_fun1 ca_id =
+let inv_fun1 ca_id1 =
   let trade_effs = Trade_table.get dummy_tid (Trade.Get) in
   let broker_effs = Broker_table.get dummy_bid (Broker.Get) in  
-  let b_num_trades = List.fold_right (get_broker_num_trades ca_id) broker_effs 0 in
+  let b_num_trades = List.fold_right (get_broker_num_trades ca_id1) broker_effs 0 in
   let num_trades_by_customer = List.fold_right 
-                      (get_num_trades_by_customer ca_id trade_effs) trade_effs 0 in
+                      (get_num_trades_by_customer ca_id1 trade_effs) trade_effs 0 in
   b_num_trades = num_trades_by_customer
 
-let inv_fun2 ca_id =
+let inv_fun2 ca_id2 =
   let trade_effs = Trade_table.get dummy_tid (Trade.Get) in
   let broker_effs = Broker_table.get dummy_bid (Broker.Get) in  
-  let b_comm = List.fold_right (get_broker_comm ca_id) broker_effs 0 in
-  let t_comm = List.fold_right (get_trades_comm_by_customer ca_id) trade_effs 0 in
+  let b_comm = List.fold_right (get_broker_comm ca_id2) broker_effs 0 in
+  let t_comm = List.fold_right (get_trades_comm_by_customer ca_id2) trade_effs 0 in
   b_comm = t_comm
 
-let inv_fun3 ca_id =
+let inv_fun3 ca_id3 =
   let holding_summary_effs = HoldingSummary_table.get dummy_hsid (HoldingSummary.Get) in  
   let holding_effs = Holding_table.get dummy_hid (Holding.Get) in
-  let h_qty = List.fold_right (get_holding_qty ca_id) holding_effs 0 in
-  let hs_qty = List.fold_right (get_holding_summary_qty ca_id) holding_summary_effs 0 in
+  let h_qty = List.fold_right (get_holding_qty ca_id3) holding_effs 0 in
+  let hs_qty = List.fold_right (get_holding_summary_qty ca_id3) holding_summary_effs 0 in
   h_qty = hs_qty
 (*<<<<<<<<<< INVARIANT FUNCTIONS END >>>>>>>>>>>>>>>>*)

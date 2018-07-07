@@ -162,10 +162,10 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
     KE.add (Ident.create "UUID") (Kind.Extendible (ref [])) ke in
   (* 11. Txn type def to KE *)
   let add_Txn ke = 
-    let enums = List.map Fun.name ((*invs @ *)writes) in 
+    let enums = List.map Fun.name (invs @ writes) in 
       (* We also add a nop txn for NOP effects *)
       KE.add  (Ident.create @@ Type.to_string Type.txn)
-        (Kind.Enum (enums@[L.txn_nop; L.generic_inv])) ke in
+        (Kind.Enum (enums@[L.txn_nop(*; L.generic_inv*)])) ke in
   (* 12. txn function to TE *)
   let add_txn te = 
     let typ = Type.Arrow (Type.eff,Type.txn) in

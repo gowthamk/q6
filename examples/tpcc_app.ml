@@ -68,7 +68,7 @@ end
 module District = struct
   type id = Uuid.t
   type eff = Get 
-    | Dummy (*Only for Q6*)
+    | Add
     | IncNextOID of {d_id:id; d_w_id:Warehouse.id} (*Consistency: TW*)
 end
 
@@ -379,7 +379,7 @@ let do_new_order_txn did wid cid olqty olsupplywid =
   begin
     (*TODO: without appending something to key dummy_did
       we can't do get_latest_nextoid on key dummy_did.*)
-    District_table.append dummy_did (District.Dummy);
+    District_table.append dummy_did (District.Add);
     let latest_nextoid = get_latest_nextoid did wid in
     District_table.append dummy_did (District.IncNextOID 
                                {d_id=did;
