@@ -64,7 +64,6 @@
 
 /utils/config.ml
 
-Makefile
 *.z3
 *.log
 trash.txt

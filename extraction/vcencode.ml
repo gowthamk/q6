@@ -1,37 +1,10 @@
 open Utils
 open Speclang
 open Specelab
-open Z3
-open Z3.SMT
-open Z3.Sort
-open Z3.Expr
-open Z3.Optimize
-open Z3.Solver
-open Z3.Symbol
-open Z3.Datatype
-open Z3.FuncDecl
-open Z3.Boolean
-open Z3.Arithmetic 
-open Z3.Arithmetic.Integer
-open Z3.Quantifier
-module Solver = Z3.Solver
-module OptSolver = Z3.Optimize
-module Model = Z3.Model
-module Symbol = Z3.Symbol
-module Optimize = Z3.Optimize
-module Int = Z3.Arithmetic.Integer
-module Bool = Z3.Boolean
-module Quantifier = Z3.Quantifier
-module Expr = Z3.Expr
-module Constructor = Z3.Datatype.Constructor
+open Z3encode
 module VC = Vc
+module Z3 = Z3encode
 
-let mk_new_ctx () = 
-  let cfg = [("model", "true"); ("proof", "false")] in
-    mk_context cfg
-
-let ctx = ref @@ mk_new_ctx ()
-let solver = ref @@ mk_solver !ctx None 
 let (cmap : (string,Expr.expr) Hashtbl.t) = Hashtbl.create 211
 let (tmap : (Type.t,Sort.sort) Hashtbl.t) = Hashtbl.create 47
 let (fmap : (string,FuncDecl.func_decl) Hashtbl.t) = Hashtbl.create 47
@@ -43,8 +16,7 @@ type  bv_t = {id:Ident.t;const:Z3.Expr.expr; name:string;}
 
 let reset () = 
   begin
-    ctx := mk_new_ctx ();
-    solver := mk_solver !ctx None;
+    Z3.reset ();
     Hashtbl.clear cmap;
     Hashtbl.clear tmap;
     Hashtbl.clear fmap;
@@ -73,52 +45,6 @@ let all_mkkey_funs () = Hashtbl.fold (fun name func acc ->
   let bv_const = mk_const_s bv_name s in
     {name=bv_name; id=bv_id; const=bv_const}*)
 
-(*
- * Z3 API for the current ctx
- *)
-let sym s = Symbol.mk_string !ctx s
-let mk_app f args = mk_app !ctx f args
-let mk_int_sort () = Int.mk_sort !ctx
-let mk_bool_sort () = Bool.mk_sort !ctx
-let mk_numeral_i i = Int.mk_numeral_i !ctx i
-let mk_uninterpreted_s s = mk_uninterpreted_s !ctx s
-let mk_const_s str sort = Expr.mk_const_s !ctx str sort
-let mk_constructor_s a b c d e = mk_constructor_s !ctx a b c d e
-let mk_sort_s a b = mk_sort_s !ctx a b
-let mk_func_decl_s name arg_sorts res_sort = 
-  mk_func_decl_s !ctx name arg_sorts res_sort
-let mk_and conjs = mk_and !ctx conjs
-let mk_or conjs = mk_or !ctx conjs
-let mk_eq e1 e2 = mk_eq !ctx e1 e2
-let mk_gt e1 e2 = mk_gt !ctx e1 e2
-let mk_lt e1 e2 = mk_lt !ctx e1 e2
-let mk_ge e1 e2 = mk_ge !ctx e1 e2
-let mk_le e1 e2 = mk_le !ctx e1 e2
-let mk_not e = mk_not !ctx e
-let mk_true () = mk_true !ctx
-let mk_false () = mk_false !ctx
-let mk_ite e1 e2 e3 = mk_ite !ctx e1 e2 e3
-let mk_distinct es = mk_distinct !ctx es
-let mk_add es = mk_add !ctx es
-let mk_sub es = mk_sub !ctx es
-let mk_mul es = mk_mul !ctx es
-let _assert e = Solver.add !solver [e]
-let _assert_all e = Solver.add !solver e
-let push () = Solver.push !solver
-let pop () = Solver.pop !solver 1
-let check_sat () = Solver.check !solver []
-
-let (@=>) e1 e2 = mk_implies !ctx e1 e2
-let (@<=>) e1 e2 = mk_iff !ctx e1 e2
-let (@&) e1 e2 = mk_and [e1; e2]
-let (@|) e1 e2 = mk_or [e1; e2]
-let (@=) e1 e2 = mk_eq e1 e2
-let (@<) e1 e2 = mk_lt e1 e2
-let (@>) e1 e2 = mk_gt e1 e2
-let (@>=) e1 e2 = mk_ge e1 e2
-let (@<=) e1 e2 = mk_le e1 e2
-let (@!=) e1 e2 = mk_not (e1 @= e2)
-let (!@) e = mk_not e
 let vis (e1,e2) = mk_app (fun_of_str "vis") [e1; e2]
 let so (e1,e2) = mk_app (fun_of_str "so") [e1; e2]
 let hb (e1,e2) = mk_app (fun_of_str "hb") [e1; e2]
@@ -136,16 +62,6 @@ let sametxn (e1,e2) = (txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2))
 let notsametxn (e1,e2) = mk_not ((txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2)))
 let seqno e = mk_app (fun_of_str "seqno") [e]
 let oper e = mk_app (fun_of_str "oper") [e]
-
-let forall sorts f = 
-  let n = List.length sorts in
-  let names = List.tabulate n 
-                (fun i -> sym @@ "a"^(string_of_int i)) in
-  let vars = List.tabulate n 
-               (fun i -> mk_bound !ctx (n-i-1) 
-                           (List.nth sorts i)) in
-  let body = f vars in
-    mk_forall !ctx sorts names body None [] [] None None
 
 let forallE1 f = 
   let s_Eff = Hashtbl.find tmap Type.eff in
@@ -670,7 +586,7 @@ let assert_tpcc_contracts () =
   let olwid = fun_of_str "ol_w_id" in
   let odid = fun_of_str "o_d_id" in
   let owid = fun_of_str "o_w_id" in
-  (*let f11 a b c d = 
+  let f11 a b c d = 
     mk_and [oper(a)@=dincnoid;
             oper(b)@=oadd;
             oper(c)@=dget;
@@ -680,12 +596,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d);] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                       mk_and [mk_not(vis(b,d));
-                                              mk_not(vis(a,c))]] in*)
+                                              mk_not(vis(a,c))]] in
   let f11' a b =
     mk_and [oper(a) @= dincnoid; 
             oper(b) @= dget; 
             sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
-  (*let f12 a b c d = 
+  let f12 a b c d = 
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
             oper(c)@=oget;
@@ -695,12 +611,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
+                                             mk_not(vis(a,c))]] in
   let f12' a b = mk_and 
                   [(mk_app oid [a]) @= (mk_app oid [b]);
                    (mk_app odid [a]) @= (mk_app odid [b]);
                    (mk_app owid [a]) @= (mk_app owid [b])] @=> (a@=b) in
-  (*let f23 a b c d = 
+  let f23 a b c d = 
     mk_and [oper(a)@=waddytd;
             oper(b)@=hadd;
             oper(c)@=wget;
@@ -710,8 +626,8 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
-  (*let f31 a b c d = 
+                                             mk_not(vis(a,c))]] in
+  let f31 a b c d = 
     mk_and [oper(a)@=caddbal;
             oper(b)@=hadd;
             oper(c)@=cget;
@@ -721,7 +637,7 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
+                                             mk_not(vis(a,c))]] in
   let f31' a b c d e f =
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
@@ -742,7 +658,7 @@ let assert_tpcc_contracts () =
                  (mk_app cdid [a]) @= (mk_app cdid [b]);
                  (mk_app cwid [a]) @= (mk_app cwid [b])] @=> (a@=b) in
 
-  (*let f41 a b c d = 
+  let f41 a b c d = 
     mk_and [oper(a)@=osetcarrier;
             oper(b)@=olsetdel;
             oper(c)@=oget;
@@ -750,7 +666,7 @@ let assert_tpcc_contracts () =
             so(a,b);
             so(c,d);
             sameobj(a,c);
-            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in*)
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
   (*Since we're not dealing with Orderline set delivery date, we need to
     assert that the delivery transaction only handles one order at a time.*)
   let f31''' a b c = mk_and
@@ -760,16 +676,16 @@ let assert_tpcc_contracts () =
                  txn(c)@=dtxn;
                  vis(a,c);
                  vis(b,c)] @=> a@=b in
-  let assertions = List.concat [[atomic "do_new_order_txn"(*forallE4 f11*);
+  let assertions = List.concat [[(*atomic "do_new_order_txn"*)forallE4 f11;
                                  forallE2 f11';
-                                 (*forallE4 f12;*)
+                                 forallE4 f12;
                                  forallE2 f12';
-                                 atomic "do_payment_txn"(*forallE4 f23*);
-                                 (*forallE4 f31;*)
+                                 (*atomic "do_payment_txn"*)forallE4 f23;
+                                 forallE4 f31;
                                  forallE6 f31';
                                  forallE2 f31'';
                                  forallE3 f31''';
-                                 atomic "do_delivery_txn"(*forallE4 f41*)];] in
+                                 (*atomic "do_delivery_txn"*)forallE4 f41];] in
   let asns = List.map expr_of_quantifier assertions in
     _assert_all asns
 
@@ -875,7 +791,7 @@ let assert_paxos_contracts () =
                       @=> ((mk_app round [a]) @!= (mk_app round [b])) @| a@=b in
   let f a b c d = 
     mk_and [mk_or [oper(d) @= ac_get; oper(d) @= pr_get;oper(d) @= lr_get]; 
-            so(a,b); vis(b,c); so(c,d)(*); sameobj(a,d)*)] @=> vis(a,d) in
+            so(a,b); vis(b,c); so(c,d)(*; sameobj(a,d)*)] @=> vis(a,d) in
   let f1 a b =
     mk_and [oper(a) @= propose; 
             mk_or [oper(b) @= ac_get; oper(b) @= pr_get; oper(b) @= lr_get];
@@ -978,6 +894,10 @@ exception VerificationFailure
 exception InvalidCtxt
 
 let discharge vc = 
+  let get_counterexample () = 
+    let mp = Modelparse.make (module Z3) cmap tmap fmap vc in
+    let module MP = (val mp: Modelparse.T) in
+      MP.get_counterexample () in
   let open VC in
   let txn_id = vc.txn in
   let inv_id = vc.inv in
@@ -1002,7 +922,7 @@ let discharge vc =
       List.iter2 declare_pred pres pre_preds;
       assert_consts pres;
       List.iter2 declare_pred posts post_preds;
-      output_string out_chan @@ Solver.to_string !solver;
+      output_string out_chan @@ Z3.ctx_to_string ();
       (* printf "SMT VCs printed in %s.z3\n" vc_name; *)
       (* printf "Checking the sanity of the context ...";*)
       begin (* <IO> *)
@@ -1034,14 +954,15 @@ let discharge vc =
         assert_neg_const post;
         (match check_sat () with
           | UNSATISFIABLE -> ()
-          | SATISFIABLE -> raise VerificationFailure
+          | SATISFIABLE -> (get_counterexample ();
+                            raise VerificationFailure)
           | UNKNOWN -> failwith "Z3 timed out. Please increase \
                           the time limit!");
         pop();) posts;
     end
 
 let doIt vcs = 
-  let _ = if not (Log.open_ "z3.log")
+  let _ = if not (Z3.Log.open_ "z3.log")
           then failwith "Log couldn't be opened." in
   let _ = try Unix.mkdir "VCs" 0o777 
           with Unix.Unix_error(Unix.EEXIST,_,_) -> () in
