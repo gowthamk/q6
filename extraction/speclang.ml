@@ -39,6 +39,9 @@ struct
   let is_eff t = 
     (*let _ = Printf.printf "is_eff(%s)\n" (to_string t) in*) 
       (t = eff)
+  let other_id = function (Other id) -> id
+    | _ -> failwith "Type.other_id: invalid argument!"
+
   let _of str = match str with
     |"Oper" -> oper | "id" -> id | "Eff" -> eff | "Ssn" -> ssn
     | "UUID" -> uuid | "ObjType" -> objtyp | "unit" -> Unit

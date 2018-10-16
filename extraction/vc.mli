@@ -9,6 +9,7 @@ type t = {txn: Ident.t;
           inv: Ident.t;
           kbinds:KE.t; 
           tbinds: TE.t; 
+          vbinds: VE.t; (* Needed only for EffCons.t *)
           (* exec: Axiomatic execution of the program and the
            * invariants. *)
           exec: Predicate.t list;

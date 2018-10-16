@@ -5,9 +5,17 @@ open Z3encode
 module VC = Vc
 module Z3 = Z3encode
 
-let (cmap : (string,Expr.expr) Hashtbl.t) = Hashtbl.create 211
-let (tmap : (Type.t,Sort.sort) Hashtbl.t) = Hashtbl.create 47
-let (fmap : (string,FuncDecl.func_decl) Hashtbl.t) = Hashtbl.create 47
+class encoding_env = Encoding_env.encoding_env
+
+let e = new encoding_env
+let cmap = e#get_cmap
+let tmap = e#get_tmap
+let fmap = e#get_fmap
+let sort_of_typ = e#sort_of_typ
+let fun_of_str = e#fun_of_str
+let const_of_name = e#const_of_name
+let const_of_id = e#const_of_id 
+let all_mkkey_funs = e#all_mkkey_funs
 
 let fresh_bv_name = gen_name "bv" 
 let fresh_bv () = Ident.create @@  fresh_bv_name ()
@@ -17,26 +25,9 @@ type  bv_t = {id:Ident.t;const:Z3.Expr.expr; name:string;}
 let reset () = 
   begin
     Z3.reset ();
-    Hashtbl.clear cmap;
-    Hashtbl.clear tmap;
-    Hashtbl.clear fmap;
+		e#reset ();
   end
 
-let sort_of_typ typ = try Hashtbl.find tmap typ 
-                      with Not_found ->
-                        (printf "%s not found in tmap" 
-                           (Type.to_string typ); raise Not_found)
-let fun_of_str str = try Hashtbl.find fmap str
-                      with Not_found ->
-                        (printf "%s not found in fmap" str;
-                         raise Not_found)
-let const_of_name n = try Hashtbl.find cmap n 
-                      with Not_found -> (printf "%s not found in cmap" n; 
-                                         raise Not_found)
-let const_of_id id = const_of_name @@ Ident.name id
-let all_mkkey_funs () = Hashtbl.fold (fun name func acc -> 
-                          if Str.string_match (Str.regexp "^mkkey_") name 0
-                          then func::acc else acc) fmap []
 (*let new_bv ?sort () = 
   let s = match sort with | Some s -> s
                           | _ -> raise Not_found in
@@ -45,23 +36,23 @@ let all_mkkey_funs () = Hashtbl.fold (fun name func acc ->
   let bv_const = mk_const_s bv_name s in
     {name=bv_name; id=bv_id; const=bv_const}*)
 
-let vis (e1,e2) = mk_app (fun_of_str "vis") [e1; e2]
-let so (e1,e2) = mk_app (fun_of_str "so") [e1; e2]
-let hb (e1,e2) = mk_app (fun_of_str "hb") [e1; e2]
-let ar (e1,e2) = mk_app (fun_of_str "ar") [e1; e2]
+let vis = e#vis
+let so = e#so
+let hb = e#hb
+let ar = e#ar
+let sameobj = e#sameobj
+let objtyp = e#objtyp
+let objid = e#objid
+let replid = e#replid
+let ssn = e#ssn
+let txn = e#txn
+let currtxn = e#currtxn
+let seqno = e#seqno
+let oper = e#oper
 let ar_id (id1,id2) = mk_app (fun_of_str "ar_id") [id1; id2]
 let ar_oper (op1,op2) = mk_app (fun_of_str "ar_oper") [op1; op2]
-let sameobj (e1,e2) = mk_app (fun_of_str "sameobj") [e1; e2]
-let objtyp e = mk_app (fun_of_str "objtyp") [e]
-let objid e = mk_app (fun_of_str "objid") [e]
-let replid e = mk_app (fun_of_str "replid") [e]
-let ssn e = mk_app (fun_of_str "ssn") [e]
-let txn e = mk_app (fun_of_str "txn") [e]
-let currtxn e = mk_app (fun_of_str "currtxn") [e]
 let sametxn (e1,e2) = (txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2))
 let notsametxn (e1,e2) = mk_not ((txn(e1) @= txn(e2)) @& (ssn(e1) @= ssn(e2)))
-let seqno e = mk_app (fun_of_str "seqno") [e]
-let oper e = mk_app (fun_of_str "oper") [e]
 
 let forallE1 f = 
   let s_Eff = Hashtbl.find tmap Type.eff in
@@ -895,7 +886,7 @@ exception InvalidCtxt
 
 let discharge vc = 
   let get_counterexample () = 
-    let mp = Modelparse.make (module Z3) cmap tmap fmap vc in
+    let mp = Modelparse.make (module Z3) e vc in
     let module MP = (val mp: Modelparse.T) in
       MP.get_counterexample () in
   let open VC in

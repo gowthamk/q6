@@ -1102,10 +1102,11 @@ let doIt_invs envs (invs: Fun.t list) : (P.t * env) list =
       (P.of_sv body_sv,env')) 
     envs invs
 
-let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_pred = 
+let mk_conc_vc schemas (ke,te,ve,pe) env1' env2' inv_pred = 
   let ke' = merge_kes ke env1'.ke env2'.ke in
   let te' = merge_tes te env1'.te env2'.te in
   let pe' = merge_pes pe env1'.pe env2'.pe in
+  let ve' = ve (* Only EffCons.t are needed from ve *) in
   let (effs1, effs2) = (env1'.effs, env2'.effs) in
   let in_set e s = S.Or (List.map (fun e' -> S.Eq (S.Var e', S.Var e)) s) in
   let currtxn_assertion1 = 
@@ -1180,7 +1181,8 @@ let mk_conc_vc schemas (ke,te,pe) env1' env2' inv_pred =
   let _ = P.print post in*)
   let open VC in 
   {txn=env1'.txn; inv=env2'.txn; kbinds=ke'; 
-   tbinds=te'; pre=pre; exec=exec; post=post}
+   tbinds=te'; vbinds=ve'; pre=pre; exec=exec; 
+   post=post}
 
 let doIt (ke,te,pe,ve) rdt_spec = 
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
@@ -1211,7 +1213,7 @@ let doIt (ke,te,pe,ve) rdt_spec =
                  | None -> writes in 
   let _ = Printf.printf "Number of transactions: %d\n" 
             (List.length txn_list) in
-  let ke = KE.add (Ident.create "Eff") 
+  let ke = KE.add (Type.other_id Type.eff) 
                   (Kind.Enum (!eff_consts@[L.e_nop])) ke in
   let env1s = List.map (fun t -> mk_env_for_fun (ke,te,[],ve) t)
                        txn_list in
@@ -1236,7 +1238,7 @@ let doIt (ke,te,pe,ve) rdt_spec =
   let inv_pred_env2's = doIt_invs env2s inv_list in
   let conc_vcs = List.map 
       (fun (env1',(inv_pred, env2')) -> 
-         mk_conc_vc schemas (ke,te,pe) env1' env2' inv_pred) @@ 
+         mk_conc_vc schemas (ke,te,ve,pe) env1' env2' inv_pred) @@ 
       List.cross_product env1's inv_pred_env2's in
   let _ = printf "Symbolic Execution took %fs\n" (Sys.time() -. t) in
   let _ = flush_all () in

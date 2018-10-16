@@ -1,1 +1,2 @@
 ./q6 -dtypedtree -c store_interface.mli store_interface.ml uuid.mli uuid.ml q6_interface.ml microblog.ml 2>1 typed_tree.out
+./q6 -k 10 -f do_new_order_txn -p inv_payment_and_delivery_txn -c store_interface.mli store_interface.ml uuid.mli uuid.ml q6_interface.ml tpcc_app.ml

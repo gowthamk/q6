@@ -64,20 +64,26 @@ ALLOBJS=$(UTILS) $(PARSING) $(TYPING)  # $(EXTRACTION) $(COMP)
 default: q6.opt
 	cp q6.opt ./examples/q6
 
-MYFILES=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
-				extraction/rdtextract.cmi extraction/rdtextract.cmx extraction/light_env.cmi \
-				extraction/light_env.cmx extraction/specelab.cmi extraction/specelab.cmx \
-				extraction/vc.cmi extraction/vc.cmx extraction/specverify.cmi extraction/specverify.cmx \
+MYFILES=extraction/utils.cmx extraction/light_env.cmi extraction/light_env.cmx \
+				extraction/speclang.cmx extraction/rdtspec.cmx \
+				extraction/rdtextract.cmi extraction/rdtextract.cmx \
+				extraction/specelab.cmi extraction/specelab.cmx \
+				extraction/vc.cmi extraction/vc.cmx \
+				extraction/specverify.cmi extraction/specverify.cmx \
+				extraction/z3encode.cmi extraction/z3encode.cmx \
+				extraction/encoding_env.cmi extraction/encoding_env.cmx \
+				extraction/modelparse.cmi extraction/modelparse.cmx \
 				extraction/vcencode.cmi extraction/vcencode.cmx 
-MYCMX=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
-			extraction/rdtextract.cmx extraction/light_env.cmx extraction/specelab.cmx \
-			extraction/vc.cmx extraction/specverify.cmx extraction/vcencode.cmx
+MYCMX=extraction/utils.cmx extraction/light_env.cmx extraction/speclang.cmx \
+			extraction/rdtspec.cmx extraction/rdtextract.cmx extraction/specelab.cmx \
+			extraction/vc.cmx extraction/specverify.cmx extraction/z3encode.cmx \
+			extraction/encoding_env.cmx extraction/modelparse.cmx extraction/vcencode.cmx
 
 q6.byte: $(ALLOBJS)
 	$(CAMLC) $(LINKFLAGS) -custom -o q6.byte str.cma unix.cma nums.cma $(ALLOBJS)
 
 q6.opt: $(ALLOBJS:.cmo=.cmx) $(MYFILES) $(COMP:.cmo=.cmx)
-	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/Z3 -cclib -L/Users/gowtham/git/z3/build/lib -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
+	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/z3 -cclib -L/homes/gkaki/lib/z3 -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
 
 reconfigure:
 	./configure $(CONFIGURE_ARGS)
@@ -182,10 +188,10 @@ beforedepend:: parsing/lexer.ml
 	$(CAMLC) $(COMPFLAGS) -c $<
 
 .mli.cmi:
-	$(CAMLC) $(COMPFLAGS) -c $<
+	ocamlfind $(CAMLC) $(COMPFLAGS) -package z3 -c $<
 
 .ml.cmx:
-	ocamlfind $(CAMLOPT) $(COMPFLAGS) -package Z3 -c $<
+	ocamlfind $(CAMLOPT) $(COMPFLAGS) -package z3 -c $<
 
 world: q6.byte q6.opt
 

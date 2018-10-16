@@ -89,6 +89,7 @@ let implementation ppf sourcefile outputprefix =
     let _ = match (rdt_spec,env) with 
       | (Some rdt_spec, Some (ke,te,ve)) -> 
           let open Specelab in 
+          let open Speclang in 
             begin
               (*
               Printf.printf "----- Kind Env ----\n";

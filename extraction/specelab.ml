@@ -97,7 +97,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let oper_cons = oper_cons@[Cons.nop] in
   (* Oper type is an enum type *)
   let oper_names = List.map Cons.name oper_cons in
-  let add_Oper = KE.add (Ident.create "Oper") 
+  let add_Oper = KE.add (Type.other_id Type.oper) 
                    (Kind.Enum oper_names) in
   (* 4. Qualified effcons aliases to VE *)
   (* eg: "User.Add" :-> SV.EffCons (Cons.T {name="User_Add", ...}) *)
@@ -164,7 +164,7 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_Txn ke = 
     let enums = List.map Fun.name (invs @ writes) in 
       (* We also add a nop txn for NOP effects *)
-      KE.add  (Ident.create @@ Type.to_string Type.txn)
+      KE.add  (Type.other_id Type.txn)
         (Kind.Enum (enums@[L.txn_nop(*; L.generic_inv*)])) ke in
   (* 12. txn function to TE *)
   let add_txn te = 
