@@ -56,14 +56,18 @@ let make (module Z3: Z3) (env:#encoding_env) vc =
 
       method get_id = id
       method set_oper op = oper <- op
+      method get_oper = oper
       method set_txn t = txn <- t
       method set_objid i = objid <- i
       method set_arg (k:Ident.t) (v:Expr.expr) = 
         args <- (Ident.name k, Expr.to_string v)::args
       method to_string = 
-        Printf.sprintf "{id:%s; oper:%s; txn:%s; objid:%s}" 
+        let args_str = String.concat "; " @@ 
+              List.map (fun (a,b) -> a^":"^b) args in
+        Printf.sprintf "{id:%s; oper:%s; txn:%s; objid:%s; \
+                         args:{%s}}" 
                        (Ident.name id) (Ident.name oper) 
-                       (Ident.name txn) objid
+                       (Ident.name txn) objid args_str
     end 
  
   let eval e = match Model.eval (Z3.get_model ()) e true with 
@@ -150,21 +154,35 @@ let make (module Z3: Z3) (env:#encoding_env) vc =
       effs
 
   (*
-   * Set the args for the given effect
+   * Set the args (attributes) for the given effect. 
    *)
   let set_args eff = 
     (*
      * Effect constructors (Cons.t) are accessible through VE.
-     * Constructor attributes are what we want.
+     * Find the constructor C of eff (i.e., e.oper = C). C's
+     * attributes are what we want.
      *)
-    let eff_cons = VE.fold_all 
+    let Cons.T {args}= from_just @@ VE.fold_all 
         (fun id sv acc -> match sv with
-           | S.EffCons cons -> cons::acc
-           | _ -> acc) ve [] in
-    let accessors = List.concat @@ List.map 
-        (fun (Cons.T {args}) -> List.map fst args) 
-        eff_cons in
-    ()
+           | S.EffCons (Cons.T{name} as cons) 
+             when (Ident.name name = Ident.name eff#get_oper) -> 
+               Some cons
+           | _ -> acc) ve None in
+    let accessor_ids = List.map fst args in
+    (* Get Z3 functions corresponding to accessors *)
+    let accessor_fs = List.map (fun acc_id -> fun_of_str @@
+                                  Ident.name acc_id) accessor_ids in
+    (* Evaluate the functions for each effect *)
+    let e = const_of_id @@ eff#get_id in
+    let accessor_vals = List.map 
+        (fun f -> eval (mk_app f [e])) accessor_fs in
+    let _ = List.iter2  eff#set_arg accessor_ids accessor_vals in
+      eff
+
+  (*
+   * Set the args (attributes) for the given list of effects.
+   *)
+  let set_args effs = List.map set_args effs
 
   let get_counterexample () = 
     let model = Z3.get_model () in 
@@ -175,7 +193,8 @@ let make (module Z3: Z3) (env:#encoding_env) vc =
     let vc_name = (Ident.name txn_id)^"_" ^(Ident.name inv_id) in
     let out_chan = open_out @@ "Models/"^vc_name^".z3" in
     let _ = output_string out_chan @@ Z3.Model.to_string model in
-    let effs = set_objids @@ set_txns @@ set_opers @@ mk_effs () in
+    let effs = set_args @@ set_objids @@ set_txns @@ set_opers 
+                @@ mk_effs () in
     let _ = List.iter (fun e -> printf "%s\n" @@ e#to_string)
                       effs in
       ()

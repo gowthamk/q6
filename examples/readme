@@ -1,2 +1,12 @@
 ./q6 -dtypedtree -c store_interface.mli store_interface.ml uuid.mli uuid.ml q6_interface.ml microblog.ml 2>1 typed_tree.out
 ./q6 -k 10 -f do_new_order_txn -p inv_payment_and_delivery_txn -c store_interface.mli store_interface.ml uuid.mli uuid.ml q6_interface.ml tpcc_app.ml
+
+
+Z3Encode module holds a reference to ctx, and all its api's modify
+this ctx. It offers a reset api to reset this ctx (replace it with a
+new one). Only one Z3Encode module ever exists (there is no functor
+creating multiple). This module is named Z3, and accessed in Vcencode
+and Encoding_env. Encoding_env defines a class for objects that
+manage the state of encoding. This object can also be reset. Ideally,
+Z3Encode should also define an object since it manages the ctx state.
+But let's defer this refactoring. 

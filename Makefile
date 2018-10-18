@@ -83,7 +83,8 @@ q6.byte: $(ALLOBJS)
 	$(CAMLC) $(LINKFLAGS) -custom -o q6.byte str.cma unix.cma nums.cma $(ALLOBJS)
 
 q6.opt: $(ALLOBJS:.cmo=.cmx) $(MYFILES) $(COMP:.cmo=.cmx)
-	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/z3 -cclib -L/homes/gkaki/lib/z3 -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
+#$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/z3 -cclib -L/homes/gkaki/lib/z3 -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
+	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/Z3 -cclib -L/Users/gowtham/git/z3/build/lib -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
 
 reconfigure:
 	./configure $(CONFIGURE_ARGS)
