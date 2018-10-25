@@ -10,3 +10,26 @@ and Encoding_env. Encoding_env defines a class for objects that
 manage the state of encoding. This object can also be reset. Ideally,
 Z3Encode should also define an object since it manages the ctx state.
 But let's defer this refactoring. 
+
+In TPCC App, dummy_did is the only key of the district table to which
+we write records. We search for the district corresponding to a given
+did by going over all district records and finding the one that
+matches. This arrangement helps us write invariants that require
+queries over non-key columns (i.e., they require secondary indexes,
+which is not supported by our architecture). 
+There are multiple dummy_ids, one for each table, but all of them map
+to a single UUID in specverify. 
+
+  (eval !e0)
+  (eval !e2)
+  (eval (so !e0 !e2))
+  (eval E9)
+  (eval E8)
+  (eval E7)
+  (eval E6)
+  (eval E5)
+  (eval E4)
+  (eval E3)
+  (eval E2)
+  (eval E1)
+  (eval E0)

@@ -1,6 +1,7 @@
 module type T = 
 sig
-  val get_counterexample : unit -> unit
+  type t
+  val get_counterexample : unit -> t
 end
 
 module type Z3 = module type of Z3encode

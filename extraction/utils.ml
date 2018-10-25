@@ -6,8 +6,9 @@ sig
   val tabulate : int -> (int -> 'a) -> 'a list 
   val last : 'a list -> 'a
   val take : int -> 'a list -> 'a list
-  val distinct_pairs: 'a list -> ('a*'a) list
-  val cross_product : 'a list -> 'b list -> ('a*'b) list
+  val linear_pairs: 'a list -> ('a*'a) list (* n-1 pairs *)
+  val distinct_pairs: 'a list -> ('a*'a) list (* n(n+1)/2 pairs *)
+  val cross_product : 'a list -> 'b list -> ('a*'b) list (* n^2 pairs *)
   val split2: ('a * 'b * 'c) list -> ('a list * 'b list * 'c list)
 end =
 struct
@@ -33,6 +34,10 @@ struct
   let rec take n l = match n with
     | 0 -> []
     | _ -> (hd l)::(take (n-1) (tl l))
+
+  let rec linear_pairs l = match l with 
+    | [] -> [] | [x] -> []
+    | x::y::xs -> (x,y)::(linear_pairs @@ y::xs)
 
   let rec distinct_pairs l = match l with
     | [] -> [] | [x] -> [] 
@@ -69,3 +74,35 @@ let gen_name name_base =
       let x = name_base^(string_of_int !count) in
         (count := !count + 1; x)
 
+(* 
+ * Reducing a transitive relation by elimination of redundant pairs
+ *)
+module type RELNODE = sig 
+  type t
+  val compare: t -> t -> int
+  val hash: t -> int
+  val equal: t -> t -> bool
+end
+let reduce_transitive (type a) 
+                      (module V: RELNODE with type t = a)
+                      (rel: (a * a) list) : (a*a) list =
+  let module G = Graph.Imperative.Graph.Concrete(V) in
+  let module SCG = Graph.Components.Make(G) in
+  let module DAG = Graph.Imperative.Digraph.ConcreteBidirectional(V) in
+  let module T = Graph.Topological.Make(DAG) in
+  let g = G.create () in
+  let _ = List.iter (G.add_edge_e g) rel in
+  let (n,f) = SCG.scc g in
+  let dags = Array.init n (fun _ -> DAG.create ()) in
+  let _ = List.iter (fun (a,b) -> 
+                      begin 
+                        assert (f a = f b);
+                        let dag = dags.(f a) in
+                        DAG.add_edge_e dag (a,b);
+                      end) rel in
+  let lorders = Array.map (fun dag -> 
+                             T.fold (fun v acc -> acc@[v]) dag [])
+                          dags in
+  let lpairs = List.concat @@ List.map List.linear_pairs
+                      @@ Array.to_list lorders in
+  lpairs

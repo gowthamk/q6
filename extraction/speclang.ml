@@ -123,6 +123,7 @@ struct
   let e_nop = Ident.create "_ENOP"
   let ssn_nop = Ident.create "ssn_nop"
   let txn_nop = Ident.create "txn_nop"
+  let replids = List.map Ident.create ["R1"; "R2"; "R3"]
   (*let generic_inv = Ident.create "invariant"*)
 end
 

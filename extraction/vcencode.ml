@@ -888,7 +888,7 @@ let discharge vc =
   let get_counterexample () = 
     let mp = Modelparse.make (module Z3) e vc in
     let module MP = (val mp: Modelparse.T) in
-      MP.get_counterexample () in
+      ignore @@ MP.get_counterexample () in
   let open VC in
   let txn_id = vc.txn in
   let inv_id = vc.inv in

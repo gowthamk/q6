@@ -84,7 +84,7 @@ q6.byte: $(ALLOBJS)
 
 q6.opt: $(ALLOBJS:.cmo=.cmx) $(MYFILES) $(COMP:.cmo=.cmx)
 #$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/z3 -cclib -L/homes/gkaki/lib/z3 -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
-	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/Z3 -cclib -L/Users/gowtham/git/z3/build/lib -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
+	$(CAMLOPT) $(LINKFLAGS) -I `opam config var lib`/Z3 -I `opam config var lib`/ocamlgraph -cclib -L/Users/gowtham/git/z3/build/lib -o q6.opt str.cmxa unix.cmxa nums.cmxa z3ml.cmxa graph.cmxa $(ALLOBJS:.cmo=.cmx) $(MYCMX) $(COMP:.cmo=.cmx)
 
 reconfigure:
 	./configure $(CONFIGURE_ARGS)
@@ -189,10 +189,10 @@ beforedepend:: parsing/lexer.ml
 	$(CAMLC) $(COMPFLAGS) -c $<
 
 .mli.cmi:
-	ocamlfind $(CAMLC) $(COMPFLAGS) -package z3 -c $<
+	ocamlfind $(CAMLC) $(COMPFLAGS) -package z3 -package Ocamlgraph -c $<
 
 .ml.cmx:
-	ocamlfind $(CAMLOPT) $(COMPFLAGS) -package z3 -c $<
+	ocamlfind $(CAMLOPT) $(COMPFLAGS) -package z3 -package Ocamlgraph -c $<
 
 world: q6.byte q6.opt
 

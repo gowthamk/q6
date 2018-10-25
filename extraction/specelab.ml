@@ -88,8 +88,8 @@ let bootstrap (Rdtspec.T {schemas; reads; writes; invs; aux}) =
   let add_Id ke = KE.add (Ident.create "Id") Kind.Uninterpreted ke in
   (* 2.5 ReplId typedef to KE. Hardcoding to 3 replicas currently. *)
   let add_ReplId ke = 
-    let repls = List.map Ident.create ["R1"; "R2"; "R3"] in
-      KE.add (Ident.create "ReplId") (Kind.Enum repls) ke in
+      KE.add (Type.other_id Type.replid) 
+             (Kind.Enum L.replids) ke in
   (* 3. Oper typedef to KE *)
   let aliased_oper_cons = extract_oper_cons schemas in
   let (_,oper_cons) = List.split aliased_oper_cons in
