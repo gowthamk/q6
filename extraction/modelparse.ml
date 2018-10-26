@@ -377,7 +377,6 @@ let make (module Z3: Z3) (env:#encoding_env) vc =
                             List.map (fun eff -> 
                                         Ident.name eff#get_id) l)) 
                       so_forest in*)
-    let _ = printf "\n" in
     (*let _ = List.iter (fun e -> printf "%s\n" @@ e#to_string)
                       effs in*)
     (*let _ = printf "---------- visibility ------\n" in

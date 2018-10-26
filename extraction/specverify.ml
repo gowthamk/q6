@@ -873,7 +873,16 @@ and doIt_eff_cases env eff_sv cases =
                             (fun (xop,y) -> (from_just xop,y)) 
                             ifopes, 
                           elsee) 
-     | _ -> failwith "doIt_eff_cases: Unexpected" in
+     | (ifopes,elseopes) -> 
+         let f  = function 
+          | (Some sv1, sv2) -> Printf.sprintf "(Some %s,%s)" 
+                                 (S.to_string sv1) (S.to_string sv2)
+          | (None, sv2) -> Printf.sprintf "(None, %s)" 
+                             (S.to_string sv2) in
+         let s1 = String.concat "\n" @@ List.map f ifopes in
+         let s2 = String.concat "\n" @@ List.map f elseopes in 
+         let _ = printf "ifopes:\n  %s\n\nelseopes:\n  %s\n" s1 s2 in
+           failwith "doIt_eff_cases: Unexpected" in
    (*let assumps = (List.concat @@ List.map 
                          (function P.BoolExpr v -> [v]
                             | _ -> []) env.pe) in*)

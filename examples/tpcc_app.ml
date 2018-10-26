@@ -303,13 +303,40 @@ let get_ol_ids wid did o eff =
     | _ -> None)
   | _ -> None
 
+let is_set_delivery_date_for oid3 did3 wid3 eff = match eff with
+  | Some x -> (match x with
+      | Orderline.SetDeliveryDate {ol_o_id=oid4; ol_d_id=did4;
+                                   ol_w_id=wid4; ol_delivery_d=dd4} ->
+          if oid3 = oid4 && did3=did4 && wid3=wid4 then 1 else 0
+      | _ -> 0)
+  | _ -> 0
+
+let is_delivered_ol ol_ctxt2 oid2 did2 wid2 = 
+  (*List.exists ol_ctxt2 (is_set_delivery_date_for oid2 did2 wid2)*)
+  let cnts = List.map (is_set_delivery_date_for 
+                         oid2 did2 wid2) ol_ctxt2 in
+  (List.fold_right sum cnts 0 > 0)
+
+let filter_delivered ol_ctxt eff = match eff with
+  | Some x ->
+      (match x with 
+        | Orderline.Add {ol_o_id= oid1; ol_d_id=did1; ol_w_id=wid1} ->
+          if is_delivered_ol ol_ctxt oid1 did1 wid1 
+          then Some x else None
+        | _ -> eff)
+  | _ -> None
+
 let get_olamt_cid wid did cid orderline_ctxt oeff =
   match oeff with
   | Some x -> 
       (match x with 
        | Order.Add {o_id=oid; o_c_id=ocid; o_w_id=w_id; o_d_id=d_id} ->
           if w_id = wid && d_id = did && ocid=cid then
-            let amts = List.map (get_olamt wid did oid) orderline_ctxt in
+            let delivered_ols = List.map (filter_delivered 
+                                            orderline_ctxt) 
+                                         orderline_ctxt in
+            let amts = List.map (get_olamt wid did oid)
+                          delivered_ols in
             let amt = List.fold_right sum amts 0 in 
             amt
           else 0

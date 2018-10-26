@@ -20,16 +20,7 @@ which is not supported by our architecture).
 There are multiple dummy_ids, one for each table, but all of them map
 to a single UUID in specverify. 
 
-  (eval !e0)
-  (eval !e2)
-  (eval (so !e0 !e2))
-  (eval E9)
-  (eval E8)
-  (eval E7)
-  (eval E6)
-  (eval E5)
-  (eval E4)
-  (eval E3)
-  (eval E2)
-  (eval E1)
-  (eval E0)
+Do not use `List.exists` unless absolutely needed. Instead map to
+integers, fold for sum, and then check for >0. `List.exists` yeilds a
+large disjunction which derails algebraic simplification. Correct
+approach is to delegate the reasoning to Z3.
