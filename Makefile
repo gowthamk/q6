@@ -64,13 +64,14 @@ ALLOBJS=$(UTILS) $(PARSING) $(TYPING)  # $(EXTRACTION) $(COMP)
 default: q6.opt
 	cp q6.opt ./examples/q6
 
-MYFILES=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
-				extraction/rdtextract.cmi extraction/rdtextract.cmx extraction/light_env.cmi \
-				extraction/light_env.cmx extraction/specelab.cmi extraction/specelab.cmx \
+MYFILES=extraction/utils.cmx extraction/light_env.cmi extraction/light_env.cmx \
+				extraction/speclang.cmx extraction/rdtspec.cmx \
+				extraction/rdtextract.cmi extraction/rdtextract.cmx \
+				extraction/specelab.cmi extraction/specelab.cmx \
 				extraction/vc.cmi extraction/vc.cmx extraction/specverify.cmi extraction/specverify.cmx \
 				extraction/vcencode.cmi extraction/vcencode.cmx 
-MYCMX=extraction/utils.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
-			extraction/rdtextract.cmx extraction/light_env.cmx extraction/specelab.cmx \
+MYCMX=extraction/utils.cmx extraction/light_env.cmx extraction/speclang.cmx extraction/rdtspec.cmx \
+			extraction/rdtextract.cmx extraction/specelab.cmx \
 			extraction/vc.cmx extraction/specverify.cmx extraction/vcencode.cmx
 
 q6.byte: $(ALLOBJS)

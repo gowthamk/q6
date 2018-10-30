@@ -670,7 +670,7 @@ let assert_tpcc_contracts () =
   let olwid = fun_of_str "ol_w_id" in
   let odid = fun_of_str "o_d_id" in
   let owid = fun_of_str "o_w_id" in
-  (*let f11 a b c d = 
+  let f11 a b c d = 
     mk_and [oper(a)@=dincnoid;
             oper(b)@=oadd;
             oper(c)@=dget;
@@ -680,12 +680,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d);] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                       mk_and [mk_not(vis(b,d));
-                                              mk_not(vis(a,c))]] in*)
+                                              mk_not(vis(a,c))]] in
   let f11' a b =
     mk_and [oper(a) @= dincnoid; 
             oper(b) @= dget; 
             sameobj(a,b)] @=> (sametxn(a,b) @| vis(a,b)) in
-  (*let f12 a b c d = 
+  let f12 a b c d = 
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
             oper(c)@=oget;
@@ -695,12 +695,12 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
+                                             mk_not(vis(a,c))]] in
   let f12' a b = mk_and 
                   [(mk_app oid [a]) @= (mk_app oid [b]);
                    (mk_app odid [a]) @= (mk_app odid [b]);
                    (mk_app owid [a]) @= (mk_app owid [b])] @=> (a@=b) in
-  (*let f23 a b c d = 
+  let f23 a b c d = 
     mk_and [oper(a)@=waddytd;
             oper(b)@=hadd;
             oper(c)@=wget;
@@ -710,8 +710,8 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
-  (*let f31 a b c d = 
+                                             mk_not(vis(a,c))]] in
+  let f31 a b c d = 
     mk_and [oper(a)@=caddbal;
             oper(b)@=hadd;
             oper(c)@=cget;
@@ -721,7 +721,7 @@ let assert_tpcc_contracts () =
             sameobj(a,c);
             sameobj(b,d)] @=> mk_or [mk_and [vis(b,d);vis(a,c)];
                                      mk_and [mk_not(vis(b,d));
-                                             mk_not(vis(a,c))]] in*)
+                                             mk_not(vis(a,c))]] in
   let f31' a b c d e f =
     mk_and [oper(a)@=oadd;
             oper(b)@=oladd;
@@ -742,7 +742,7 @@ let assert_tpcc_contracts () =
                  (mk_app cdid [a]) @= (mk_app cdid [b]);
                  (mk_app cwid [a]) @= (mk_app cwid [b])] @=> (a@=b) in
 
-  (*let f41 a b c d = 
+  let f41 a b c d = 
     mk_and [oper(a)@=osetcarrier;
             oper(b)@=olsetdel;
             oper(c)@=oget;
@@ -750,7 +750,7 @@ let assert_tpcc_contracts () =
             so(a,b);
             so(c,d);
             sameobj(a,c);
-            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in*)
+            sameobj(b,d)] @=> (vis(b,d) @<=> vis(a,c)) in
   (*Since we're not dealing with Orderline set delivery date, we need to
     assert that the delivery transaction only handles one order at a time.*)
   let f31''' a b c = mk_and
@@ -760,16 +760,16 @@ let assert_tpcc_contracts () =
                  txn(c)@=dtxn;
                  vis(a,c);
                  vis(b,c)] @=> a@=b in
-  let assertions = List.concat [[atomic "do_new_order_txn"(*forallE4 f11*);
+  let assertions = List.concat [[(*atomic "do_new_order_txn"*)forallE4 f11;
                                  forallE2 f11';
-                                 (*forallE4 f12;*)
+                                 forallE4 f12;
                                  forallE2 f12';
-                                 atomic "do_payment_txn"(*forallE4 f23*);
-                                 (*forallE4 f31;*)
+                                 (*atomic "do_payment_txn"*)forallE4 f23;
+                                 forallE4 f31;
                                  forallE6 f31';
                                  forallE2 f31'';
                                  forallE3 f31''';
-                                 atomic "do_delivery_txn"(*forallE4 f41*)];] in
+                                 (*atomic "do_delivery_txn"*)forallE4 f41];] in
   let asns = List.map expr_of_quantifier assertions in
     _assert_all asns
 
