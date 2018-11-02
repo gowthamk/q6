@@ -67,6 +67,7 @@ val use_inlining_arguments_set : ?round:int -> inlining_arguments -> unit
 val objfiles : string list ref
 val ccobjs : string list ref
 val dllibs : string list ref
+val compile_to_effs : bool ref
 val bmc_bound: int ref
 val fn_to_verify : string option ref
 val inv_fn : string option ref

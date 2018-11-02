@@ -24,3 +24,10 @@ Do not use `List.exists` unless absolutely needed. Instead map to
 integers, fold for sum, and then check for >0. `List.exists` yeilds a
 large disjunction which derails algebraic simplification. Correct
 approach is to delegate the reasoning to Z3.
+
+Implementing CRDT Translation
+=============================
+
+First step is to indentify table types. We shall do it by examining
+the `_Types` module. Every type instantiated with a `CRTable.t` gives
+us a table.

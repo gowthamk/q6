@@ -8,9 +8,9 @@ end
 
 open BankAccount_Types
 
-module BankAccounts(S:sig
-                        val t: accounts_table
-                      end) = struct
+module Account(S:sig
+                   val t: accounts_table
+                 end) = struct
   open S
 
   let get_balance (acc_id:Uuid.t) = 
@@ -33,12 +33,12 @@ module BankAccounts(S:sig
     else false
 end
 
-module BankingApp(S:sig 
+module Banking_App(S:sig 
                       val db: ba_db 
                     end) = struct
-  module BA = BankAccounts(struct 
-                            let t = S.db.accounts_table
-                           end)
+  module BA = Account(struct 
+                       let t = S.db.accounts_table
+                      end)
   open BA
   let transfer_txn (acc_id1:Uuid.t) (acc_id2:Uuid.t) amt = 
     let status = withdraw acc_id1 amt in 

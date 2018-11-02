@@ -667,6 +667,9 @@ let assert_tpcc_contracts () =
                  txn(c)@=dtxn;
                  vis(a,c);
                  vis(b,c)] @=> a@=b in
+  (*let f51 a = oper(a)@=olsetdel @=> txn(a)@=dtxn in
+  let f52 a = oper(a)@=olsetdel @=> 
+                  existsE1 (fun b -> mk_and[txn(b)@=dtxn; so(a,b)]) in*)
   let assertions = List.concat [[(*atomic "do_new_order_txn"*)forallE4 f11;
                                  forallE2 f11';
                                  forallE4 f12;

@@ -17,7 +17,7 @@ let rec extract_ttype_paths str_items =
                  if fstr = "Store_interface.Make" then [apath] else []
            |  _ -> [])
     | Tmod_structure struc -> extract_ttype_paths struc.str_items
-    | _ -> failwith "AUnimpl." in
+    | _ -> failwith "extract_ttype_paths: Unimpl." in
   let doIt_item_desc = function Tstr_open open_desc -> []
     | Tstr_include include_decl -> 
         doIt_module_expr_desc include_decl.incl_mod.mod_desc

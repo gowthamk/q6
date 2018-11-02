@@ -12,6 +12,11 @@
 (*   special exception on linking described in the file LICENSE.          *)
 (*                                                                        *)
 (**************************************************************************)
+let mk_compile_to_effs f = 
+  "-compile-to-effs", Arg.Unit f, 
+    Printf.sprintf "Compile CRDT-based implementation to effect
+    implementation." 
+;;
 
 let mk_k f = 
   "-k", Arg.Int f, 
@@ -714,6 +719,7 @@ module type Common_options = sig
 end
 
 module type Compiler_options = sig
+  val _compile_to_effs: unit -> unit
   val _k : int -> unit
   val _a : unit -> unit
   val _annot : unit -> unit
@@ -880,6 +886,7 @@ end;;
 module Make_bytecomp_options (F : Bytecomp_options) =
 struct
   let list = [
+    mk_compile_to_effs F._compile_to_effs;
     mk_k F._k;
     mk_f F._f;
     mk_p F._p;
@@ -1024,6 +1031,7 @@ end;;
 module Make_optcomp_options (F : Optcomp_options) =
 struct
   let list = [
+    mk_compile_to_effs F._compile_to_effs;
     mk_k F._k;
     mk_f F._f;
     mk_p F._p;

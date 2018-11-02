@@ -59,6 +59,7 @@ module type Common_options = sig
 end;;
 
 module type Compiler_options = sig
+  val _compile_to_effs: unit -> unit
   val _k : int -> unit
   val _a : unit -> unit
   val _annot : unit -> unit

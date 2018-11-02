@@ -67,6 +67,7 @@ default: q6.opt
 MYFILES=extraction/utils.cmx extraction/light_env.cmi extraction/light_env.cmx \
 				extraction/speclang.cmx extraction/rdtspec.cmx \
 				extraction/rdtextract.cmi extraction/rdtextract.cmx \
+				extraction/quelea.cmi extraction/quelea.cmx \
 				extraction/specelab.cmi extraction/specelab.cmx \
 				extraction/vc.cmi extraction/vc.cmx \
 				extraction/specverify.cmi extraction/specverify.cmx \
@@ -75,7 +76,8 @@ MYFILES=extraction/utils.cmx extraction/light_env.cmi extraction/light_env.cmx \
 				extraction/modelparse.cmi extraction/modelparse.cmx \
 				extraction/vcencode.cmi extraction/vcencode.cmx 
 MYCMX=extraction/utils.cmx extraction/light_env.cmx extraction/speclang.cmx \
-			extraction/rdtspec.cmx extraction/rdtextract.cmx extraction/specelab.cmx \
+			extraction/rdtspec.cmx extraction/rdtextract.cmx extraction/quelea.cmx \
+			extraction/specelab.cmx \
 			extraction/vc.cmx extraction/specverify.cmx extraction/z3encode.cmx \
 			extraction/encoding_env.cmx extraction/modelparse.cmx extraction/vcencode.cmx
 

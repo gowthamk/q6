@@ -42,6 +42,7 @@ let objfiles = ref ([] : string list)   (* .cmo and .cma files *)
 and ccobjs = ref ([] : string list)     (* .o, .a, .so and -cclib -lxxx *)
 and dllibs = ref ([] : string list)     (* .so and -dllib -lxxx *)
 
+let compile_to_effs = ref false         (* Compile CRDTs to Quelea *)
 let bmc_bound = ref 5                   (* -k *)
 let fn_to_verify = ref (None : string option) (* -f *)
 let inv_fn = ref (None : string option) (* -p *)

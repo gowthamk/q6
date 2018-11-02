@@ -20,6 +20,7 @@ open Format
 open Typedtree
 open Compenv
 module VCE = Vcencode
+module Q = Quelea
 
 (* Compile a .mli file *)
 
@@ -62,6 +63,34 @@ let print_if ppf flag printer arg =
 
 let (++) x f = f x
 
+let q6_compile ppf typedtree = 
+  let _ = Printf.printf "q6_compile\n" in
+  let tt' = Q.compile ppf typedtree in
+  ()
+
+let q6_analyze ppf typedtree = 
+  let rdt_spec = (Rdtextract.doIt ppf typedtree) in
+  let env = (Specelab.doIt rdt_spec) in
+  (*let _ = match (rdt_spec,env) with 
+    | (Some rdt_spec, Some (ke,te,ve)) -> 
+        let open Specelab in 
+        let open Speclang in 
+          begin
+            Printf.printf "----- Kind Env ----\n";
+            KE.print ke;
+            Printf.printf "----- Type Env ----\n";
+            TE.print te;
+            Printf.printf "----- Val Env ----\n";
+            VE.print ve;
+          end 
+    | _ -> ()  in*)
+  let conc_vcs = match (rdt_spec,env) with 
+    | (rdt_spec, (ke,te,ve)) -> 
+        let open Specverify in 
+          (doIt (ke,te,[],ve) rdt_spec) in
+  let _ = (VCE.doIt conc_vcs) in
+  ()
+
 let implementation ppf sourcefile outputprefix =
   Compmisc.init_path false;
   let modulename = module_of_filename ppf sourcefile outputprefix in
@@ -72,6 +101,10 @@ let implementation ppf sourcefile outputprefix =
     match Str.split (Str.regexp "_") (Filename.chop_extension sourcefile) with
       | _::"app"::_ -> true
       | _ -> false in
+  let is_crdt_mod sourcefile = 
+    match Str.split (Str.regexp "_") (Filename.chop_extension sourcefile) with
+      | "crdt"::_ -> true
+      | _ -> false in
   try
     let (typedtree, coercion) =
       Pparse.parse_implementation ~tool_name ppf sourcefile
@@ -81,65 +114,15 @@ let implementation ppf sourcefile outputprefix =
           (Typemod.type_implementation sourcefile outputprefix modulename env)
       ++ print_if ppf Clflags.dump_typedtree
         Printtyped.implementation_with_coercion in
-    let rdt_spec = if is_app_mod sourcefile 
-                   then Some (Rdtextract.doIt ppf typedtree) 
-                   else None in
-    let env = match rdt_spec with | None -> None
-      | Some spec -> Some (Specelab.doIt spec) in
-    let _ = match (rdt_spec,env) with 
-      | (Some rdt_spec, Some (ke,te,ve)) -> 
-          let open Specelab in 
-          let open Speclang in 
-            begin
-              (*
-              Printf.printf "----- Kind Env ----\n";
-              KE.print ke;
-              Printf.printf "----- Type Env ----\n";
-              TE.print te;
-              Printf.printf "----- Val Env ----\n";
-              VE.print ve;
-               *)
-              ()
-            end 
-      | _ -> ()  in
-    let conc_vcs = match (rdt_spec,env) with 
-      | (Some rdt_spec, Some (ke,te,ve)) -> 
-          let open Specverify in 
-            Some (doIt (ke,te,[],ve) rdt_spec)
-      | _ -> None  in
-    let _ = match conc_vcs with 
-      | Some conc_vcs -> Some (VCE.doIt conc_vcs)
-      | None -> None in
-      if !Clflags.print_types then begin
-        Warnings.check_fatal ();
-        Stypes.dump (Some (outputprefix ^ ".annot"))
-      end else ()(*begin
-        let bytecode, required_globals =
-          (typedtree, coercion)
-          ++ Timings.(time (Transl sourcefile))
-              (Translmod.transl_implementation modulename)
-          ++ print_if ppf Clflags.dump_rawlambda Printlambda.lambda
-          ++ Timings.(accumulate_time (Generate sourcefile))
-              (fun lambda ->
-                Simplif.simplify_lambda lambda
-                ++ print_if ppf Clflags.dump_lambda Printlambda.lambda
-                ++ Bytegen.compile_implementation modulename
-                ++ print_if ppf Clflags.dump_instr Printinstr.instrlist)
-        in
-        let objfile = outputprefix ^ ".cmo" in
-        let oc = open_out_bin objfile in
-        try
-          bytecode
-          ++ Timings.(accumulate_time (Generate sourcefile))
-              (Emitcode.to_file oc modulename objfile);
-          Warnings.check_fatal ();
-          close_out oc;
-          Stypes.dump (Some (outputprefix ^ ".annot"))
-        with x ->
-          close_out oc;
-          remove_file objfile;
-          raise x
-      end*)
+    if !Clflags.compile_to_effs && is_crdt_mod sourcefile 
+    then q6_compile ppf typedtree 
+    else if is_app_mod sourcefile 
+    then q6_analyze ppf typedtree
+    else ();
+    if !Clflags.print_types then begin
+      Warnings.check_fatal ();
+      Stypes.dump (Some (outputprefix ^ ".annot"))
+    end else ()
   with x ->
     Stypes.dump (Some (outputprefix ^ ".annot"));
     raise x

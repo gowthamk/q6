@@ -10,6 +10,8 @@ sig
   val distinct_pairs: 'a list -> ('a*'a) list (* n(n+1)/2 pairs *)
   val cross_product : 'a list -> 'b list -> ('a*'b) list (* n^2 pairs *)
   val split2: ('a * 'b * 'c) list -> ('a list * 'b list * 'c list)
+  val find_some: ('a -> 'b option) -> 'a list -> 'b
+  val map_some: ('a -> 'b option) -> 'a list -> 'b list
 end =
 struct
   include List
@@ -55,6 +57,17 @@ struct
         let (xs,ys,zs) = split2 l' in
         (x::xs, y::ys, z::zs)
 
+  let rec find_some f l = match l with
+    | [] -> raise Not_found
+    | x::xs -> (match f x with 
+        | Some y -> y
+        | None -> find_some f xs)
+
+  let rec map_some f l = match l with
+    | [] -> []
+    | x::xs -> (match f x with
+        | Some y -> y::(map_some f xs)
+        | None -> map_some f xs)
 end
 
 module Str =

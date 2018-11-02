@@ -80,6 +80,7 @@ module Options = Main_args.Make_bytecomp_options (struct
   let _absname = set Location.absname
   let _annot = set annotations
   let _binannot = set binary_annotations
+  let _compile_to_effs = set compile_to_effs
   let _k k = bmc_bound := k
   let _f s = fn_to_verify := Some s
   let _p s = inv_fn := Some s
