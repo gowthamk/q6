@@ -5,7 +5,7 @@ module Microblog_Types = struct
   type users_table =  user CRTable.t
   type tweet = {id:Uuid.t; author_id: Uuid.t; content: string}
   type tweets_table = tweet CRTable.t
-  type line_item = {user_id:Uuid.t; tweet_id:Uuid.t}
+  type line_item = {(*user_*)id:Uuid.t; tweet_id:Uuid.t}
   type userline_table = line_item CRTable.t
   type timeline_table = line_item CRTable.t
   type mb_db = {users_table:users_table; 
@@ -45,7 +45,7 @@ module Userline(S:sig
   open S
 
   let add (user_id:Uuid.t) (tweet_id:Uuid.t) = 
-    CRTable.insert {user_id=user_id; tweet_id=tweet_id} t
+    CRTable.insert {id=user_id; tweet_id=tweet_id} t
 end
 
 module Timeline(S:sig 
@@ -54,7 +54,7 @@ module Timeline(S:sig
   open S
 
   let add (user_id:Uuid.t) (tweet_id:Uuid.t) = 
-    CRTable.insert {user_id=user_id; tweet_id=tweet_id} t
+    CRTable.insert {id=user_id; tweet_id=tweet_id} t
 end
 
 module Tweet(S:sig

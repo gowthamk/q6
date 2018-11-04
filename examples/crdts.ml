@@ -10,6 +10,7 @@ module CRTable = struct
 
   let find f g t = failwith "Unimpl."
   let update f g t = ()
+  let delete g t = ()
   let insert x t = ()
 end
 
