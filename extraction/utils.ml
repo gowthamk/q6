@@ -80,6 +80,7 @@ let from_just = function (Some x) -> x
   | None -> failwith "Expected something. Got nothing."
 
 let printf = Printf.printf
+let sprintf = Printf.sprintf
 
 let gen_name name_base = 
   let count = ref 0 in
@@ -119,3 +120,219 @@ let reduce_transitive (type a)
   let lpairs = List.concat @@ List.map List.linear_pairs
                       @@ Array.to_list lorders in
   lpairs
+
+(*
+ *
+ *)
+module QueleaUtils = struct
+open Asttypes
+open Path
+open Types
+open Typedtree
+open Printf
+
+let nil_type_expr = {desc=Tnil; level=0; id=0}
+
+let exp_of exp_desc = 
+  {exp_desc=exp_desc;
+   exp_loc=Location.none;
+   exp_extra=[];
+   (* -- TODO: put correct type -- *)
+   exp_type=nil_type_expr;
+   exp_env=Env.empty;
+   exp_attributes=[]}
+
+let longident_loc_of name = 
+  let long_ident = Longident.Lident name in
+  let open Location in
+  {txt=long_ident; loc=none}
+
+let cons_desc_of name = 
+  {cstr_name=name;
+   cstr_res=nil_type_expr;
+   cstr_existentials=[];
+   cstr_args=[];
+   cstr_arity=1;
+   cstr_tag=Cstr_constant 0;
+   cstr_consts=0;
+   cstr_nonconsts=0;
+   cstr_normal=0;
+   cstr_generalized=false;
+   cstr_private=Public;
+   cstr_loc=Location.none;
+   cstr_attributes=[];
+   cstr_inlined=None;}
+
+let label_desc_of name = 
+  {lbl_name=name;
+   lbl_res=nil_type_expr;
+   lbl_arg=nil_type_expr;
+   lbl_mut=Immutable;
+   lbl_pos=0;
+   lbl_all=Array.of_list [];
+   lbl_repres=Record_regular;
+   lbl_private=Public;
+   lbl_loc=Location.none;
+   lbl_attributes=[]}
+  
+let exp_of_id id = 
+  let name = Ident.name id in
+  let loc = longident_loc_of name in
+  let val_desc = {val_type=nil_type_expr; 
+                  val_kind=Val_reg;
+                  val_loc=Location.none;
+                  val_attributes=[]} in
+  exp_of @@ Texp_ident (Pident id, loc, val_desc)
+
+let reflective_record_of ids = 
+  let refl_id id = 
+    let name = Ident.name id in
+    let loc = longident_loc_of name in
+    let ldesc = label_desc_of name in
+    let expr = exp_of_id id in
+    (loc, ldesc, expr) in
+  let fields = List.map refl_id ids in
+  exp_of @@ Texp_record (fields,None)
+
+
+let pat_of pat_desc = 
+  {pat_desc=pat_desc;
+   pat_loc=Location.none;
+   pat_extra=[];
+   pat_type=nil_type_expr;
+   pat_env=Env.empty;
+   pat_attributes=[]}
+
+let string_loc_of_id id = 
+  let open Location in
+  let iname = Ident.name id in
+  {txt=iname; loc=Location.none}
+
+let tuple_pat_of_ids id1 id2 = 
+  let open Location in
+  let ipat1 = pat_of @@ Tpat_var (id1, string_loc_of_id id1) in
+  let ipat2 = pat_of @@ Tpat_var (id2, string_loc_of_id id2) in
+  pat_of @@ Tpat_tuple [ipat1; ipat2]
+
+let add_exp_of e1 e2 = 
+  let plus_id = Ident.create "Pervasives.+" in
+  let plus = exp_of_id plus_id in
+    exp_of @@ Texp_apply (plus, [(Nolabel, Some e1);
+                                 (Nolabel, Some e2)])
+
+let parse_record_exp {exp_desc} = match exp_desc with
+  | Texp_record (fields,_) -> 
+      List.map (fun (_,{lbl_name},exp) -> (lbl_name,exp)) fields
+  | _ -> failwith "parse_record_exp: unexpected expression"
+
+let get_crtable_fn {exp_desc}= match exp_desc with
+  | Texp_ident (Pdot (Pdot (Pident id, 
+                            "CRTable",_),crfn,_),_,_) 
+    when Ident.name id = "Crdts" -> Some crfn
+  | _ -> None
+
+let is_crtable_find e = match get_crtable_fn e with
+  | Some "find" -> true 
+  | _ -> false 
+
+let is_crtable_update e = match get_crtable_fn e with
+  | Some "update" -> true
+  | _ -> false
+
+let is_crtable_insert e = 
+  match get_crtable_fn e with
+    | Some "insert" -> true
+    | _ -> false
+
+let is_crtable_insert_or_delete e = 
+  match get_crtable_fn e with
+    | Some "insert" | Some "delete" -> true
+    | _ -> false
+
+let pervasives = [("Pervasives.@@", "@@"); 
+                  ("Pervasives.::", "::"); 
+                  ("Pervasives.=", "="); 
+                  ("Pervasives.raise", "raise"); 
+                  ("Pervasives.&&", "&&"); 
+                  ("Pervasives.not", "not");
+                  ("Pervasives.||", "||"); 
+                  ("Pervasives.+", "+"); 
+                  ("Pervasives.*", "*"); 
+                  ("Pervasives.-", "-");
+                  ("Pervasives.<>", "<>");
+                  ("Pervasives.>", ">");
+                  ("Pervasives.>=", ">=");
+                  ("Pervasives.<", "<");
+                  ("Pervasives.<=", "<=");]
+
+let rec pp_const c = match c with
+  | (Const_int i) -> sprintf "%d" i
+  | (Const_char c) -> sprintf "%c" c
+  | (Const_string (s,None)) -> sprintf "%s" s
+  | (Const_string (s,Some s')) -> sprintf "%s%s" s s'
+  | (Const_float s) -> sprintf "%s" s
+  | _ -> sprintf "<-- some constant -->"
+
+let rec pp_pat {pat_desc} =
+  let f = pp_pat in
+  match pat_desc with
+    | Tpat_any -> sprintf "_"
+    | Tpat_var (v,_) -> Ident.name v
+    | Tpat_constant c -> pp_const c
+    | Tpat_tuple pats -> sprintf "(%s)" @@ 
+        String.concat "," @@ List.map f pats
+    | Tpat_construct (_,{cstr_name},pats) -> sprintf "%s(%s)"
+        cstr_name (String.concat "," @@ List.map f pats)
+    | Tpat_record (fields,_) -> sprintf "{%s}" @@
+        String.concat "; " @@ List.map 
+          (fun (_,{lbl_name},pat) -> 
+             sprintf "%s=%s" lbl_name (f pat)) fields
+    | _ -> "<-- some pat -->"
+
+and pp_expr {exp_desc} = 
+  let x=1 in
+  match exp_desc with
+    | Texp_ident (path,_,_) -> sprintf "%s" @@ 
+        String.concat "." @@ Path.all_names path
+    | Texp_constant c -> pp_const c
+    | Texp_let (_,[valbind],e) -> sprintf "(let %s in %s)"
+          (pp_valbind valbind) (pp_expr e)
+    | Texp_function (Nolabel, cases, _) -> 
+          sprintf "(function %s)" @@ pp_cases cases
+    | Texp_apply (e,args) -> 
+        let e_str = pp_expr e in
+        let arg_strs = List.map (fun (_,Some ei) ->  
+                                      pp_expr ei) args in
+        (match (List.assoc_opt e_str pervasives, arg_strs) with 
+          | (Some op,[a1;a2]) -> sprintf "%s %s %s" a1 op a2
+          | (Some op,[a]) -> sprintf "%s %s" op a
+          | (Some _, _) | (None, _) -> sprintf "(%s %s)" e_str 
+                       (String.concat " " @@ arg_strs))
+    | Texp_tuple exps -> sprintf "(%s)" @@ String.concat "," @@
+          List.map (pp_expr) exps
+    | Texp_construct (_,{cstr_name},[]) -> sprintf "%s" cstr_name
+    | Texp_construct (_,{cstr_name="::"},[e1; e2]) -> 
+        sprintf "%s::%s" (pp_expr e1) (pp_expr e2)
+    | Texp_construct (_,{cstr_name},exps) -> sprintf "%s(%s)"
+        cstr_name (String.concat "," @@ List.map (pp_expr) exps)
+    | Texp_record (fields,_) -> sprintf "{%s}" @@
+        String.concat "; " @@ List.map 
+          (fun (_,{lbl_name},exp) -> 
+             sprintf "%s=%s" lbl_name (pp_expr exp)) fields
+    | Texp_ifthenelse (e1,e2,Some e3) -> 
+        sprintf "if %s then %s else %s" (pp_expr e1) 
+          (pp_expr e2) (pp_expr e3)
+    | Texp_sequence (e1,e2) -> sprintf "(%s; %s)" (pp_expr e1) 
+                                 (pp_expr e2)
+    | Texp_match (e,cases,_,_) -> sprintf "(match %s with %s)"
+             (pp_expr e) (pp_cases cases)
+    | _ -> "<-- some expr -->"
+
+and pp_valbind {vb_pat; vb_expr} = sprintf "%s = %s" 
+    (pp_pat vb_pat) (pp_expr vb_expr)
+
+and pp_cases cases = String.concat " | " @@
+  List.map (fun {c_lhs;c_rhs} -> sprintf "%s -> %s" 
+                       (pp_pat c_lhs) (pp_expr c_rhs)) cases
+
+end

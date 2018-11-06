@@ -3,9 +3,9 @@ open Path
 open Types
 open Typedtree
 open Speclang
-open Rdtspec
 open Utils
 open Printf
+open QueleaUtils
 
 module R = Rdtextract 
 
@@ -51,6 +51,9 @@ let get_table_types str_items =
       when (match crt_path with
             | Pdot (Pdot(Pident id,"CRTable",_),"t",_) 
               when (Ident.name id = "Crdts") -> true
+            | Pdot (Pdot(Pident id,"CRTable",_),"t",_) 
+              when (Ident.name id <> "Crdts") -> 
+                (printf "\"Crdts\" module missing?"; false)
             | _ -> debug ttype_name crt_path;false) -> 
         let rtype_name = match crt_arg with
           | {ctyp_desc=Ttyp_constr (Pident rt_id,_,[])} -> 
@@ -136,14 +139,15 @@ let filter_table_mods tr_pairs str_items =
 
 (*
  * Second IR for table mod. Type annot_fun denotes a function
- * annotated with the label (ld_id) of the CRDT type it reads/writes.
+ * annotated with the label of the CRDT type it reads/writes.
  *)
 type crdt = CRInt | CRSet 
 
-type annot_fun = Fun.t * Ident.t * crdt
+type annot_fun = Fun.t * string * crdt
 
 type cr_fun = Read of annot_fun
-            | Write of annot_fun
+            | Update of annot_fun
+            | Insert of Fun.t
             | Aux of Fun.t
 
 type tmod2 = {name: string;
@@ -164,43 +168,104 @@ let get_fun_if_fun_bind (rec_flag, {vb_pat; vb_expr}) =
                  ~res_t: res_t ~body: body)
     | _ -> None
 
+(*
+ * returns a list of record type components and their types.
+ *)
+let rtype_components {typ_kind} : (string*core_type) list = 
+  match typ_kind with
+    | Ttype_record ldecs -> 
+        List.map (fun {ld_name={txt};ld_type} -> 
+                                      (txt,ld_type)) ldecs
+    | _ -> failwith "Expected record type. Got sth else."
+
+(*
+ * Returns "lbl" if the given expression is of the form:
+ *      fun {lbl} -> e'
+ *)
+let get_projected_column {exp_desc} = match exp_desc with
+  | Texp_function (_,[case],_) -> 
+      let (args,_) = Misc.extract_lambda case in
+      (match args with
+        | [arg] -> Ident.name arg
+        | _ -> failwith "get_projected_column: Unexpected!")
+  | _ -> failwith "get_projected_column: Fn expected."
+
+let get_type_of_column (col:string) 
+                       (rcomps:(string*core_type) list) = 
+  try List.assoc col rcomps 
+  with Not_found -> failwith @@ "Unknown column "^col
+
+let rec maybe_crdt_of_core_type {ctyp_desc} = match ctyp_desc with
+  | Ttyp_constr (Pdot (Pdot(Pident id,"CRInt",_),"t",_), _,[]) 
+    when Ident.name id = "Crdts" -> Some CRInt
+  | Ttyp_constr (Pdot (Pdot(Pident id,"CRSet",_),"t",_), _,_) 
+    when Ident.name id = "Crdts" -> Some CRSet
+  | Ttyp_constr(path, _, _) -> 
+      (printf "path is %s\n" @@ Printtyp.string_of_path path; None)
+  | Ttyp_alias (core_typ,_) -> maybe_crdt_of_core_type core_typ 
+  | Ttyp_poly ([],core_typ) -> maybe_crdt_of_core_type core_typ
+  | _ -> None
+
+let crdt_of_core_type core_type = 
+  let fail_msg () = 
+      Printtyp.type_expr Format.str_formatter core_type.ctyp_type;
+       "crdt_of_core_type: "^(Format.flush_str_formatter ())
+        ^" is not CRDT\n" in
+  match maybe_crdt_of_core_type core_type with
+    | Some crdt -> crdt
+    | _ -> failwith @@ fail_msg ()
+
+let get_crdt_component rcomps = 
+  let inj x = function | Some y -> Some (x,y)
+                       | None -> None in
+  let cr_comps = List.map_some 
+      (fun (name,core_type) -> 
+         inj name @@ maybe_crdt_of_core_type core_type)
+      rcomps in
+  match cr_comps with
+    | [cr_comp] -> cr_comp
+    | [] -> failwith "get_crdt_component: there are none!"
+    | _ -> failwith "get_crdt_component: there are too many!\
+                     \ Unimpl."
+
 let classify_fun_in_tmod (({rtype_dec} as tmod):tmod1)
                          (Fun.T {name; body} as fun_t) =
   let fn_name = Ident.name name in
-  let get_crtable_fn {exp_desc}= match exp_desc with
-    | Texp_ident (Pdot (Pdot (Pident id, 
-                              "CRTable",_),crfn,_),_,_) 
-      when Ident.name id = "Crdts" -> Some crfn
-    | _ -> None in
-  let is_crtable_find e = match get_crtable_fn e with
-    | Some "find" -> true 
-    | _ -> false in
-  let is_crtable_update e = match get_crtable_fn e with
-    | Some "update" -> true
-    | _ -> false in
-  let is_crtable_insert_or_delete e = 
-    match get_crtable_fn e with
-      | Some "insert" | Some "delete" -> true
-      | _ -> false in
+  (* ------ *)
+  let fn_status = ref (Aux fun_t) in
+  (* ------ *)
+  let rcomps = rtype_components rtype_dec in
   let open TypedtreeIter in
   let iter_exp ({exp_desc} as exp) = match exp_desc with
     | Texp_apply (e, [(Nolabel,Some e1); 
                       (Nolabel,Some e2); 
-                      (Nolabel,Some e3)]) ->
-      if is_crtable_find e then printf "%s is read fn\n" fn_name
-      else if is_crtable_update e then printf "%s is write fn\n" fn_name
-      else ()
+                      (Nolabel,Some e3)])
+      when (is_crtable_find e || is_crtable_update e) ->
+        let col = get_projected_column e1 in
+        let col_core_type = get_type_of_column col rcomps in
+        let col_crdt_type = crdt_of_core_type col_core_type in
+        let annot_fun = (fun_t, col, col_crdt_type) in
+        begin
+          if is_crtable_find e 
+          then (printf "%s is read fn\n" fn_name;
+               fn_status := Read annot_fun)
+          else (printf "%s is update fn\n" fn_name; 
+               fn_status := Update annot_fun)
+        end
     | Texp_apply (e, [(Nolabel,Some e1); 
                       (Nolabel,Some e2)]) 
       when is_crtable_insert_or_delete e ->
-        printf "%s is write fn\n" fn_name
+        begin
+          printf "%s is insert/delete fn\n" fn_name;
+          fn_status := Insert fun_t
+        end
     | _ -> ()(*Printtyped.expression 0 Format.str_formatter exp*) in
   let module Iterator = MakeIterator(struct
       include DefaultIteratorArgument
       let enter_expression = iter_exp
     end) in
   let _ = Iterator.iter_expression body in
-  ()
+  !fn_status
 
 let classify_funs_in_tmod ({structure={str_items}} as tmod) = 
   let get_if_val_bind {str_desc} = match str_desc with
@@ -210,9 +275,227 @@ let classify_funs_in_tmod ({structure={str_items}} as tmod) =
   let val_binds = List.map_some get_if_val_bind str_items in
   let funs = List.map_some get_fun_if_fun_bind val_binds in
   let _ = printf "%s has %d funs\n" (tmod.name) (len funs) in
-  let _ = List.iter (classify_fun_in_tmod tmod) funs in
-  {name=tmod.name; tname=tmod.tname; rtype_dec=tmod.rtype_dec; 
-   cr_funs=[]}
+  let cr_funs = List.map (classify_fun_in_tmod tmod) funs in
+  {name=tmod.name; tname=tmod.tname; 
+   rtype_dec=tmod.rtype_dec; cr_funs=cr_funs}
+
+(*
+ * Effects
+ *)
+module Eff = 
+struct
+  type t = T of {name: Ident.t; 
+                 args: (Ident.t*Types.type_desc) list;
+                 interpreter: Fun.t option;
+                 generator: Fun.t}
+end
+
+let ts_id = Ident.create "timestamp"
+let int_id = Ident.create "int"
+
+let append_id_exp = exp_of_id @@ Ident.create "append"
+let get_id_exp = exp_of_id @@ Ident.create "get"
+
+let mk_eff_append_exp_desc id_exp eff_id eff_args = 
+  let cons_name = Ident.name eff_id in
+  let loc = longident_loc_of cons_name in
+  let cons_desc = cons_desc_of cons_name in
+  let arg_ids = List.map fst eff_args in
+  let arg_record = reflective_record_of arg_ids in
+  let cons_app_desc = Texp_construct (loc, cons_desc, 
+                                      [arg_record]) in
+  let cons_app = exp_of cons_app_desc in
+  Texp_apply (append_id_exp, [(Nolabel,Some id_exp); 
+                              (Nolabel,Some cons_app)])
+ 
+let transform_interp interp crdt args = match (interp,crdt) with
+  | ({exp_desc=Texp_function (_,[case],_)}, CRSet) -> 
+      let ([crdt_arg],body) = Misc.extract_lambda case in
+      let args' = args@[(crdt_arg,Tnil)] in
+      let aset_id = Ident.create "_adds" in
+      let rset_id = Ident.create "_removes" in
+      let aset = exp_of_id aset_id in
+      let rset = exp_of_id rset_id in
+      let ts_exp = exp_of_id ts_id in
+      let open TypedtreeMap in
+      let map_exp ({exp_desc} as exp) = match exp_desc with
+        | Texp_apply (e, [(Nolabel,Some e1); 
+                          (Nolabel,Some _)]) 
+          when pp_expr e = "Crdts.CRSet.add" -> 
+            let list_cons = cons_desc_of "::" in
+            let e1' = exp_of @@ Texp_tuple [e1;ts_exp] in
+            let lloc = longident_loc_of @@ Ident.name aset_id in
+            let aset' = exp_of @@ Texp_construct 
+                          (lloc, list_cons, [e1'; aset]) in
+            exp_of @@ Texp_tuple [aset';rset]
+        | Texp_apply (e, [(Nolabel,Some e1); 
+                          (Nolabel,Some _)]) 
+          when pp_expr e = "Crdts.CRSet.remove" -> 
+            let list_cons = cons_desc_of "::" in
+            let lloc = longident_loc_of @@ Ident.name aset_id in
+            let e1' = exp_of @@ Texp_tuple [e1;ts_exp] in
+            let rset' = exp_of @@ Texp_construct 
+                          (lloc, list_cons, [e1'; rset]) in
+            exp_of @@ Texp_tuple[aset; rset']
+        | _ -> exp in
+      let module Mapper = MakeMap(struct
+          include DefaultMapArgument
+          let enter_expression = map_exp
+        end) in
+      let body' = Mapper.map_expression body in
+      let case' = {c_lhs=tuple_pat_of_ids aset_id rset_id;
+                   c_rhs=body'; c_guard=None} in 
+      let body'' = exp_of @@ Texp_match 
+                      (exp_of_id crdt_arg, [case'], [], Total) in
+      let interp' = Fun.make ~name:Fun.anonymous
+                              ~rec_flag:false ~args_t:args' 
+                              ~res_t:Tnil ~body:body'' in
+      interp'
+  | ({exp_desc=Texp_function (_,[case],_)}, CRInt) -> 
+      let ([crdt_arg],body) = Misc.extract_lambda case in
+      let args' = args@[(crdt_arg,Tnil)] in
+      let open TypedtreeMap in
+      let map_exp ({exp_desc} as exp) = match exp_desc with
+        | Texp_apply (e, [(Nolabel,Some e1); 
+                          (Nolabel,Some e2)]) 
+          when pp_expr e = "Crdts.CRInt.add" -> 
+            add_exp_of e1 e2
+        | _ -> exp in
+      let module Mapper = MakeMap(struct
+          include DefaultMapArgument
+          let enter_expression = map_exp
+        end) in
+      let body' = Mapper.map_expression body in
+      let interp' = Fun.make ~name:Fun.anonymous 
+                             ~rec_flag:false ~args_t:args' 
+                             ~res_t:Tnil ~body:body' in
+      interp'
+  | _ -> failwith "Intep is not a function!"
+
+(*
+ * Currently we map one function to one effect only.
+ *)
+let eff_of_annot_upd (Fun.T {name=fn_id; rec_flag; args_t; 
+                            res_t; body}, label, crdt) =
+  let fname = Ident.name fn_id in
+  let eff_name = String.capitalize_ascii fname in
+  let eff_id = Ident.create eff_name in
+  let eff_args = match crdt with
+    | CRInt -> args_t
+    | CRSet -> args_t@[(ts_id, Tconstr (Pident int_id, 
+                                        [], ref Mnil))] in
+  (*
+   * Interpretation fn is effectively the second argument of update.
+   *)
+  let open TypedtreeMap in
+  (* ---------- *)
+  let interp = ref None in
+  let id_exp = ref None in
+  (* ---------- *)
+  let map_exp ({exp_desc} as exp) = match exp_desc with
+    | Texp_apply (e, [(Nolabel,Some e1); 
+                      (Nolabel,Some e2); 
+                      (Nolabel,Some e3)])
+      when is_crtable_update e ->
+        let _ = interp := Some e1 in
+        (*
+         * By convention, selection predicate of update is an 
+         * equality on id
+         *)
+        let open TypedtreeIter in
+        let module Iterator = MakeIterator(struct
+            include DefaultIteratorArgument
+            let enter_expression ({exp_desc}) = 
+              match exp_desc with
+                | Texp_apply (e, [(Nolabel,Some e1);
+                                  (Nolabel,Some e2)]) 
+                  when (pp_expr e = "Pervasives.=") ->
+                    let s1 = pp_expr e1 in
+                    let s2 = pp_expr e2 in
+                    if s1 = "id" then id_exp:= Some e2 
+                    else if s2 = "id" then id_exp := Some e1
+                    else ()
+                | _ -> ()
+          end) in
+        let _ = Iterator.iter_expression e2 in
+        let id_exp = match !id_exp with
+          | Some id_exp -> id_exp
+          | None -> failwith "Id expression not found!" in
+        let exp_desc' = mk_eff_append_exp_desc id_exp 
+                                          eff_id eff_args in
+        {exp with exp_desc=exp_desc'}
+    | _ -> exp(*Printtyped.expression 0 Format.str_formatter exp*) in
+  let module Mapper = MakeMap(struct
+      include DefaultMapArgument
+      let enter_expression = map_exp
+    end) in
+  let body' = Mapper.map_expression body in
+  let upd' = Fun.make ~name:fn_id ~rec_flag:rec_flag
+                      ~args_t:eff_args ~res_t:res_t
+                      ~body:body' in
+  let interp = match !interp with
+    | None -> failwith "Interpreter expression not found!"
+    | Some interp_fn ->
+      (*
+       * body' is the body of generator. !interp is the interp fn.
+       *)
+        begin
+          printf "Transformed body of %s:\n" fname;
+          printf "%s\n" (pp_expr body');
+          (*Printtyped.expression 1 Format.std_formatter body';*)
+          printf "Interpreter function for %s:\n" fname;
+          (*Printtyped.expression 1 Format.std_formatter interp_fn;*)
+          printf "%s\n" (pp_expr interp_fn);
+          interp_fn
+        end in
+  let interp' = transform_interp interp crdt eff_args in
+  let _ = printf "Transformed interpreter fn:\n%s\n" 
+                  (pp_expr @@ Fun.body interp') in
+  let eff = Eff.T {name=eff_id; args=eff_args; 
+                   interpreter=Some interp'; 
+                   generator=upd'} in
+  eff
+
+let eff_of_insert (Fun.T {name=fn_id; rec_flag; args_t; 
+                          res_t; body}) =
+  let fname = Ident.name fn_id in
+  let eff_name = String.capitalize_ascii fname in
+  let eff_id = Ident.create eff_name in
+  let eff_args = args_t in
+  let open TypedtreeMap in
+  let map_exp ({exp_desc} as exp) = match exp_desc with
+    | Texp_apply (e, [(Nolabel,Some e1); 
+                      (Nolabel,Some e2)])
+      when is_crtable_insert e ->
+        let fields = parse_record_exp e1 in
+        let id_exp = List.assoc "id" fields in
+        let exp_desc' = mk_eff_append_exp_desc id_exp 
+                                          eff_id eff_args in
+        {exp with exp_desc=exp_desc'}
+    | _ -> exp(*Printtyped.expression 0 Format.str_formatter exp*) in
+  let module Mapper = MakeMap(struct
+      include DefaultMapArgument
+      let enter_expression = map_exp
+    end) in
+  let body' = Mapper.map_expression body in
+  let ins' = Fun.make ~name:fn_id ~rec_flag:rec_flag
+                      ~args_t:eff_args ~res_t:res_t
+                      ~body:body' in
+  let _ = begin
+            printf "Transformed body of %s:\n" fname;
+            printf "%s\n" (pp_expr body'); 
+          end in
+  let eff = Eff.T {name=eff_id; args=eff_args; 
+                   interpreter=None; generator=ins'} in
+  eff
+
+let mk_eff_cons_for_tmod ({rtype_dec; cr_funs} as tmod) =
+  let effs = List.map_some 
+      (function 
+        | Update annot_fn -> Some (eff_of_annot_upd annot_fn) 
+        | Insert fn -> Some (eff_of_insert fn)
+        | _ -> None) cr_funs in
+  ()
 
 let compile ppf ({str_items; str_type; str_final_env}) = 
   let typedec_mod = find_typedec_mod str_items in
@@ -248,4 +531,5 @@ let compile ppf ({str_items; str_type; str_final_env}) =
   let tmods1 = filter_table_mods tr_pairs str_items in
   let _ = printf "%d table modules found\n" (len tmods1)  in
   let tmods2 = List.map classify_funs_in_tmod tmods1 in
+  let tmods3 = List.map mk_eff_cons_for_tmod tmods2 in
   ()

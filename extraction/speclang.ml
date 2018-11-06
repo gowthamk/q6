@@ -141,6 +141,7 @@ module rec Fun : sig
            args_t:(Ident.t * Types.type_desc) list ->
            res_t:Types.type_desc -> body:Typedtree.expression -> t
   val name : t -> Ident.t
+  val body : t -> expression
   val anonymous : Ident.t
 end = struct
   type t = T of {name: Ident.t; 
@@ -153,6 +154,8 @@ end = struct
                  clos_args : SymbolicVal.t list}
 
   let name (T {name}) = name
+
+  let body (T {body}) = body
 
   let anonymous = Ident.create "<anon>"
 
@@ -724,6 +727,17 @@ struct
           let (args,body) = extract_lambda case in
             (id::args,body)
       | (Tpat_alias (_,id,loc), _) -> ([id], c_rhs)
+      (*
+       * Note: flattens records!!
+       *)
+      | (Tpat_record ([(_,{lbl_name},_)], _), 
+         Texp_function (_,[case],_)) -> 
+          let id = Ident.create lbl_name in
+          let (args,body) = extract_lambda case in
+            (id::args,body)
+      | (Tpat_record ([(_,{lbl_name},_)], _), _) ->
+          let id = Ident.create lbl_name in
+            ([id], c_rhs)
       | _ -> failwith "Unimpl. Specverify.extract_lambda"
 
   let curry arg_tyds (res_tyd : Types.type_desc) =  
