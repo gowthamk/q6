@@ -32,10 +32,8 @@ module User(S:sig
       (fun {id} -> id=user_id) t
 
   let get_followers (user_id:Uuid.t) : Uuid.t list = 
-    let fols = CRTable.find (fun {followers} -> followers) 
-                (fun {id} -> id = user_id) t in
-    match fols with | Some fs -> CRSet.get fs
-                    | None -> []
+    CRTable.find (fun {followers} -> CRSet.get followers) 
+       (fun {id} -> id = user_id) t
 end
 
 
