@@ -247,16 +247,16 @@ let classify_fun_in_tmod (({rtype_dec} as tmod):tmod1)
         let annot_fun = (fun_t, col, col_crdt_type) in
         begin
           if is_crtable_find e 
-          then (printf "%s is read fn\n" fn_name;
+          then ((*printf "%s is read fn\n" fn_name;*)
                fn_status := Read annot_fun)
-          else (printf "%s is update fn\n" fn_name; 
+          else ((*printf "%s is update fn\n" fn_name; *)
                fn_status := Update annot_fun)
         end
     | Texp_apply (e, [(Nolabel,Some e1); 
                       (Nolabel,Some e2)]) 
       when is_crtable_insert_or_delete e ->
         begin
-          printf "%s is insert/delete fn\n" fn_name;
+          (*printf "%s is insert/delete fn\n" fn_name;*)
           fn_status := Insert fun_t
         end
     | _ -> ()(*Printtyped.expression 0 Format.str_formatter exp*) in
@@ -274,7 +274,7 @@ let classify_funs_in_tmod ({structure={str_items}} as tmod) =
     | _ -> None in
   let val_binds = List.map_some get_if_val_bind str_items in
   let funs = List.map_some get_fun_if_fun_bind val_binds in
-  let _ = printf "%s has %d funs\n" (tmod.name) (len funs) in
+  (*let _ = printf "%s has %d funs\n" (tmod.name) (len funs) in*)
   let cr_funs = List.map (classify_fun_in_tmod tmod) funs in
   {name=tmod.name; tname=tmod.tname; 
    rtype_dec=tmod.rtype_dec; cr_funs=cr_funs}
@@ -444,15 +444,15 @@ let eff_of_annot_upd (Fun.T {name=fn_id; rec_flag; args_t;
        *)
         begin
           printf "Transformed body of %s:\n" fname;
-          printf "%s\n" (pp_expr body');
+          printf "    %s\n" (pp_expr body');
           (*Printtyped.expression 1 Format.std_formatter body';*)
           printf "Interpreter function for %s:\n" fname;
           (*Printtyped.expression 1 Format.std_formatter interp_fn;*)
-          printf "%s\n" (pp_expr interp_fn);
+          printf "    %s\n" (pp_expr interp_fn);
           interp_fn
         end in
   let interp' = transform_interp interp crdt eff_args in
-  let _ = printf "Transformed interpreter fn:\n%s\n" 
+  let _ = printf "Transformed interpreter fn:\n    %s\n" 
                   (pp_expr @@ Fun.body interp') in
   let eff = Eff.T {name=eff_id; args=eff_args; 
                    interpreter=Some interp'; 
@@ -486,7 +486,7 @@ let eff_of_insert (Fun.T {name=fn_id; rec_flag; args_t;
                       ~body:body' in
   let _ = begin
             printf "Transformed body of %s:\n" fname;
-            printf "%s\n" (pp_expr body'); 
+            printf "    %s\n" (pp_expr body'); 
           end in
   let eff = Eff.T {name=eff_id; args=eff_args; 
                    interpreter=None; generator=ins'} in
@@ -564,7 +564,6 @@ let transform_crfind id_exp eff_id wr_effs label crdt =
 let transform_read (Fun.T {name; rec_flag; body; 
                            args_t; res_t}, label, crdt) wr_effs =
   let read_name = Ident.name name in
-  let _ = printf "-------- %s -------\n" read_name in
   let read_eff_name = String.capitalize_ascii read_name in
   let read_eff_id = Ident.create read_eff_name in
   let open TypedtreeMap in
@@ -583,7 +582,7 @@ let transform_read (Fun.T {name; rec_flag; body;
       let enter_expression = map_exp
     end) in
   let body' = Mapper.map_expression body in
-  let _ = printf "Transformed read of %s:\n%s\n"
+  let _ = printf "Transformed read of %s:\n    %s\n"
             (Ident.name name) (pp_expr body') in
   Fun.make ~name:name ~rec_flag:rec_flag ~args_t:args_t 
             ~res_t:res_t ~body:body'
@@ -603,13 +602,11 @@ let mk_eff_cons_for_tmod ({rtype_dec; cr_funs} as tmod) =
 
 let compile ppf ({str_items; str_type; str_final_env}) = 
   let typedec_mod = find_typedec_mod str_items in
-  let _ = printf "Typedec mod is %s\n" 
-            @@ Ident.name typedec_mod.mb_id in
   let {str_items=type_decs} = structure_of_mod typedec_mod in
   let rtype_decs = filter_record_type_decs type_decs in
   let tables = get_table_types type_decs in
-  let _ = printf "%d record types and %d tables\n" 
-            (len rtype_decs) (len tables) in
+  (*let _ = printf "%d record types and %d tables\n" 
+            (len rtype_decs) (len tables) in*)
   let (rtype_decs,db_type_dec) = 
     let (rtds,dbtds) = 
       List.partition 
@@ -633,7 +630,7 @@ let compile ppf ({str_items; str_type; str_final_env}) =
         tables in
   (* Find all table modules *)
   let tmods1 = filter_table_mods tr_pairs str_items in
-  let _ = printf "%d table modules found\n" (len tmods1)  in
+  (*let _ = printf "%d table modules found\n" (len tmods1)  in*)
   let tmods2 = List.map classify_funs_in_tmod tmods1 in
   let tmods3 = List.map mk_eff_cons_for_tmod tmods2 in
   ()
