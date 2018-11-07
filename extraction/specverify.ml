@@ -7,7 +7,6 @@ open Speclang
 module S = SymbolicVal
 module P = Predicate
 module VC = Vc
-module QUtils = QueleaUtils
 
 exception Inconsistency
 exception UListMatched
