@@ -1,3 +1,10 @@
+(*
+ * Hack flag for demo
+ *)
+let app_name = ref ""
+
+let de_count = ref 0
+
 module List :
 sig
   include module type of List
@@ -87,7 +94,6 @@ let gen_name name_base =
     fun () -> 
       let x = name_base^(string_of_int !count) in
         (count := !count + 1; x)
-
 (* 
  * Reducing a transitive relation by elimination of redundant pairs
  *)

@@ -227,6 +227,7 @@ let main () =
 
 let _ =
   Printf.printf "The Q6 Symbolic Execution Engine.\n";
+  flush_all();
   Timings.(time All) main ();
   if !Clflags.print_timings then Timings.print Format.std_formatter;
   exit 0

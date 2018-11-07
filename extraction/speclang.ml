@@ -389,26 +389,12 @@ end = struct
   let (*rec*) simplify assumps gv =  
     let rec simplify_rec assumps gv = 
       let ret str v = v in
-      let res = 
-        if assumps |= gv then ConstBool true 
-        else if assumps |= Not gv then ConstBool false
-        else match gv with
+      let res = match gv with
         (* (isSome (a? Some b : None))? d : e ---> a? d : e *)
-        | App (_isSome, [Option (Some _)]) when (_isSome = L.isSome) -> 
-            ConstBool true
-        | App (_isSome, [Option None]) when (_isSome = L.isSome) -> 
-            ConstBool false
         | App (_isSome, [ITE (a, 
                               Option (Some b), 
                               Option None)]) when (_isSome = L.isSome) -> 
             simplify_rec assumps a
-        | App (_isSome, [ITE (a, 
-                              Option None, 
-                              Option (Some b))]) when (_isSome = L.isSome) -> 
-            Not (simplify_rec assumps a)
-        | App (_isSome, [ITE(a,b,c)]) when (_isSome = L.isSome) -> 
-            simplify_rec assumps @@ ITE(a, App(_isSome,[b]),
-                                           App(_isSome, [c]))
         | App (_fromJust, [Option (Some a)]) when (_fromJust = L.fromJust) ->
            simplify_rec assumps a
         | App (f,v2s) -> 
@@ -427,9 +413,6 @@ end = struct
             simplify_rec assumps @@ And [a;b]
         | ITE (a, ConstBool true, c) -> 
             simplify_rec assumps @@ Or [a;c]
-        | ITE (a, b, ConstBool true) -> 
-            simplify_rec assumps @@ Or [Not a; b]
-        | ITE (a, b, c) when (b = c) -> b
         | ITE (a, ITE (b,c,d), e) when (d = e) ->
             simplify_rec assumps (ITE (And [a;b], c, d))
         | ITE (ITE(a,b,c),d,e) -> 
@@ -465,8 +448,6 @@ end = struct
                 [[]] svs in
             let disjuncts = List.map (fun c -> And c) conjuncts in
             simplify_rec assumps @@ Or disjuncts
-        | And svs when (List.exists (fun sv -> assumps |= Not sv) svs) -> 
-            ConstBool false
         | And svs when (List.exists (fun sv -> assumps |= sv) svs) -> 
             simplify_rec assumps @@ 
               And (List.filter (fun sv -> not (assumps |= sv)) svs)
@@ -491,9 +472,7 @@ end = struct
             let svs' = List.map do_simplify svs in
             let same = List.map2 (=) svs' svs in
             let all_same = List.fold_left (&&) true same in 
-            if all_same 
-            then Or (List.filter (fun sv -> sv <> ConstBool false) svs) 
-            else simplify_rec assumps @@ Or svs'
+            if all_same then gv else simplify_rec assumps @@ Or svs'
         | Eq (v1,v2) when (v1 = v2) -> ConstBool true
         | Eq (v1,v2) -> 
             let (v1',v2') = (simplify_rec assumps v1, simplify_rec assumps v2) in
@@ -519,18 +498,7 @@ end = struct
                | "true" -> ConstBool true
                | "false" -> ConstBool false
                | _ -> gv in
-      let _ = if (!_dsimpl && (*gv==res && *)
-                        (match gv with 
-                          | App (_isSome, _) -> _isSome = L.isSome
-                          | _ -> false)) 
-               then 
-                 begin 
-                   print empty_indent gv;
-                   printf "-~->\n";
-                   print empty_indent res;
-                 end
-               else () in
-      res in
+        res in
     let res1 = simplify_rec assumps gv in
     res1
 
@@ -675,9 +643,7 @@ struct
       ()
 
   let rec ground p = match p with
-    | BoolExpr v -> 
-        let (_,v') = simplify [] @@ S.ground v in
-        BoolExpr v'
+    | BoolExpr v -> BoolExpr (S.ground v)
     | If (t1,t2) -> If (ground t1, ground t2)
     | Iff (t1,t2) -> Iff (ground t1, ground t2)
     | _ -> p (* assuming no delayed thunks under quantifiers.*)

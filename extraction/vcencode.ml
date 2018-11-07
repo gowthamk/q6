@@ -406,13 +406,13 @@ let assert_axioms ke =
   end
                    
 
-let assert_mb_contracts () = 
-  let gt = const_of_name "Tweet_Get" in
+let assert_mb_contracts () = ()
+  (*let gt = const_of_name "Tweet_Get" in
   let f a b c d = 
     mk_and [oper(d) @= gt; so(a,b); 
             vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in
   let asns = List.map expr_of_quantifier [forallE4 f] in
-    _assert_all asns
+    _assert_all asns*)
 
 let assert_ba_contracts () =
   let do_withdraw = const_of_name "do_withdraw" in
@@ -441,8 +441,7 @@ let assert_ba_contracts () =
     mk_and [oper(a) @= wd;
             notsametxn(a,b);
             currtxn(b)] @=> vis(a, b) in
-  let asns = List.map expr_of_quantifier [(*forallE2 f;*) 
-                                          forallE4 g; 
+  let asns = List.map expr_of_quantifier [(*forallE4 g;*) 
                                           forallE1 h;
                                           forallE2 i] in
     _assert_all asns
@@ -805,7 +804,16 @@ let assert_paxos_contracts () =
                                        forallE2 f1]] in
   _assert_all asns
 
-let assert_contracts () = assert_tpcc_contracts ()
+let app_contracts = [("microblog",assert_mb_contracts); 
+                     ("bank",assert_ba_contracts);
+                     ("tpcc",assert_tpcc_contracts);
+                     ("tpce",assert_tpce_contracts)]
+
+let assert_contracts () = 
+  let cfun = List.assoc_opt (!Utils.app_name) app_contracts in
+  match cfun with
+  | Some cfun -> cfun ()
+  | None -> ()
 
 (*
 let assert_contracts () = ()

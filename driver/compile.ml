@@ -99,7 +99,7 @@ let implementation ppf sourcefile outputprefix =
   let env = Compmisc.initial_env() in
   let is_app_mod sourcefile = 
     match Str.split (Str.regexp "_") (Filename.chop_extension sourcefile) with
-      | _::"app"::_ -> true
+      | name::"app"::_ -> (Utils.app_name:=name; true)
       | _ -> false in
   let is_crdt_mod sourcefile = 
     match Str.split (Str.regexp "_") (Filename.chop_extension sourcefile) with
