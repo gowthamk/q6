@@ -372,6 +372,28 @@ let transform_interp interp crdt args = match (interp,crdt) with
       interp'
   | _ -> failwith "Intep is not a function!"
 
+let parse_id_exp e = 
+  let id_exp = ref None in
+  let open TypedtreeIter in
+  let module Iterator = MakeIterator(struct
+      include DefaultIteratorArgument
+      let enter_expression ({exp_desc}) = 
+        match exp_desc with
+          | Texp_apply (e, [(Nolabel,Some e1);
+                            (Nolabel,Some e2)]) 
+            when (pp_expr e = "Pervasives.=") ->
+              let s1 = pp_expr e1 in
+              let s2 = pp_expr e2 in
+              if s1 = "id" then id_exp:= Some e2 
+              else if s2 = "id" then id_exp := Some e1
+              else ()
+          | _ -> ()
+    end) in
+  let _ = Iterator.iter_expression e in
+  match !id_exp with
+    | Some id_exp -> id_exp
+    | None -> failwith "Id expression not found!"
+
 (*
  * Currently we map one function to one effect only.
  *)
@@ -390,7 +412,6 @@ let eff_of_annot_upd (Fun.T {name=fn_id; rec_flag; args_t;
   let open TypedtreeMap in
   (* ---------- *)
   let interp = ref None in
-  let id_exp = ref None in
   (* ---------- *)
   let map_exp ({exp_desc} as exp) = match exp_desc with
     | Texp_apply (e, [(Nolabel,Some e1); 
@@ -402,25 +423,7 @@ let eff_of_annot_upd (Fun.T {name=fn_id; rec_flag; args_t;
          * By convention, selection predicate of update is an 
          * equality on id
          *)
-        let open TypedtreeIter in
-        let module Iterator = MakeIterator(struct
-            include DefaultIteratorArgument
-            let enter_expression ({exp_desc}) = 
-              match exp_desc with
-                | Texp_apply (e, [(Nolabel,Some e1);
-                                  (Nolabel,Some e2)]) 
-                  when (pp_expr e = "Pervasives.=") ->
-                    let s1 = pp_expr e1 in
-                    let s2 = pp_expr e2 in
-                    if s1 = "id" then id_exp:= Some e2 
-                    else if s2 = "id" then id_exp := Some e1
-                    else ()
-                | _ -> ()
-          end) in
-        let _ = Iterator.iter_expression e2 in
-        let id_exp = match !id_exp with
-          | Some id_exp -> id_exp
-          | None -> failwith "Id expression not found!" in
+        let id_exp = parse_id_exp e2 in 
         let exp_desc' = mk_eff_append_exp_desc id_exp 
                                           eff_id eff_args in
         {exp with exp_desc=exp_desc'}
@@ -489,11 +492,112 @@ let eff_of_insert (Fun.T {name=fn_id; rec_flag; args_t;
                    interpreter=None; generator=ins'} in
   eff
 
+(*
+ * Read functions
+ *)
+
+let mk_fold_fn effs read_label = 
+  let eff_to_case (Eff.T {name; args; 
+                          interpreter; 
+                          generator}) acc_id = 
+    let eff_name = Ident.name name in
+    let loc = longident_loc_of eff_name in
+    let cdesc = cons_desc_of eff_name in
+    let rec_pat = record_pat_of @@ List.map fst args in
+    let lhs_pat = pat_of @@ Tpat_construct (loc, cdesc, [rec_pat]) in
+    let rhs_exp = match interpreter with
+      | Some (Fun.T {body; args_t}) -> 
+          mk_simple_let_exp (fst @@ List.last args_t) 
+                            acc_id body
+      | None -> exp_of_id @@ Ident.create read_label in
+    {c_lhs=lhs_pat; c_guard=None; c_rhs=rhs_exp} in
+  let acc_id = Ident.create "acc" in
+  let cases = List.map (fun eff -> eff_to_case eff acc_id) effs in
+  let eff_id = Ident.create "eff" in
+  let eff_exp = exp_of_id eff_id in
+  let match_exp = exp_of @@ 
+      Texp_match (eff_exp, cases, [], Total)  in
+  let inner_case = mk_simple_case acc_id match_exp in
+  let inner_fn = exp_of @@ Texp_function (Nolabel, 
+                                          [inner_case], 
+                                          Total) in
+  let outer_case = mk_simple_case eff_id inner_fn in
+    exp_of @@ Texp_function (Nolabel, [outer_case], Total)
+
+let mk_eff_get_exp_desc id_exp eff_id =
+  let cons_name = Ident.name eff_id in
+  let loc = longident_loc_of cons_name in
+  let cons_desc = cons_desc_of cons_name in
+  let cons_app_desc = Texp_construct (loc, cons_desc, []) in
+  let cons_app = exp_of cons_app_desc in
+  Texp_apply (get_id_exp, [(Nolabel,Some id_exp); 
+                           (Nolabel,Some cons_app)])
+
+let transform_crfind id_exp eff_id wr_effs label crdt =
+  let get_exp = exp_of @@ mk_eff_get_exp_desc id_exp eff_id in
+  let ctxt_id = Ident.create "ctxt" in
+  let ctxt_exp = exp_of_id ctxt_id in
+  let ctxt_pat = pat_of_id ctxt_id in
+  let foldfn = mk_fold_fn wr_effs label in
+  let frexp = exp_of_id @@ Ident.create "List.fold_right" in
+  let bexp = match crdt with
+    | CRInt -> exp_of @@ Texp_constant (Const_int 0)
+    | CRSet -> 
+        let cdesc = cons_desc_of "[]" in
+        let loc = longident_loc_of "[]" in
+        let nil_e = exp_of @@ Texp_construct(loc, cdesc, []) in
+        exp_of @@ Texp_tuple [nil_e; nil_e] in
+  let fold_exp = exp_of @@ 
+          Texp_apply (frexp, [(Nolabel, Some foldfn); 
+                              (Nolabel, Some ctxt_exp);
+                              (Nolabel, Some bexp)]) in
+  let inner_exp = match crdt with
+    | CRInt -> fold_exp
+    | CRSet -> exp_of @@ Texp_apply (exp_of_id @@ 
+                                        Ident.create "compute_set", 
+                                     [(Nolabel, Some fold_exp)]) in
+  let vb = {vb_pat=ctxt_pat; vb_expr=get_exp; 
+            vb_attributes=[]; vb_loc=Location.none} in
+  let let_exp = exp_of @@ Texp_let (Nonrecursive, [vb],inner_exp) in
+  let_exp
+
+let transform_read (Fun.T {name; rec_flag; body; 
+                           args_t; res_t}, label, crdt) wr_effs =
+  let read_name = Ident.name name in
+  let _ = printf "-------- %s -------\n" read_name in
+  let read_eff_name = String.capitalize_ascii read_name in
+  let read_eff_id = Ident.create read_eff_name in
+  let open TypedtreeMap in
+  let map_exp ({exp_desc} as exp) = match exp_desc with
+    | Texp_apply (e, [(Nolabel,Some e1); 
+                      (Nolabel,Some e2);
+                      (Nolabel,Some e3)]) 
+      when is_crtable_find e -> 
+        let id_exp = parse_id_exp e2 in
+        let new_exp = transform_crfind id_exp read_eff_id 
+                          wr_effs label crdt in
+        new_exp
+    | _ -> exp in
+  let module Mapper = MakeMap(struct
+      include DefaultMapArgument
+      let enter_expression = map_exp
+    end) in
+  let body' = Mapper.map_expression body in
+  let _ = printf "Transformed read of %s:\n%s\n"
+            (Ident.name name) (pp_expr body') in
+  Fun.make ~name:name ~rec_flag:rec_flag ~args_t:args_t 
+            ~res_t:res_t ~body:body'
+
+
 let mk_eff_cons_for_tmod ({rtype_dec; cr_funs} as tmod) =
-  let effs = List.map_some 
+  let wr_effs = List.map_some 
       (function 
         | Update annot_fn -> Some (eff_of_annot_upd annot_fn) 
         | Insert fn -> Some (eff_of_insert fn)
+        | _ -> None) cr_funs in
+  let read_funs = List.map_some
+      (function 
+        | Read annot_fn -> Some (transform_read annot_fn wr_effs)
         | _ -> None) cr_funs in
   ()
 

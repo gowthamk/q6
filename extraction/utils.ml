@@ -194,7 +194,6 @@ let reflective_record_of ids =
   let fields = List.map refl_id ids in
   exp_of @@ Texp_record (fields,None)
 
-
 let pat_of pat_desc = 
   {pat_desc=pat_desc;
    pat_loc=Location.none;
@@ -208,11 +207,23 @@ let string_loc_of_id id =
   let iname = Ident.name id in
   {txt=iname; loc=Location.none}
 
+let pat_of_id id = pat_of @@ Tpat_var(id, string_loc_of_id id)
+
 let tuple_pat_of_ids id1 id2 = 
   let open Location in
   let ipat1 = pat_of @@ Tpat_var (id1, string_loc_of_id id1) in
   let ipat2 = pat_of @@ Tpat_var (id2, string_loc_of_id id2) in
   pat_of @@ Tpat_tuple [ipat1; ipat2]
+
+let record_pat_of ids = 
+  let field_of_id id = 
+    let name = Ident.name id in
+    let loc = longident_loc_of name in 
+    let ldesc = label_desc_of name in
+    let pat = pat_of @@ Tpat_var (id, string_loc_of_id id) in
+    (loc, ldesc, pat) in
+  let pats = List.map field_of_id ids in
+  pat_of @@ Tpat_record (pats,Closed)
 
 let add_exp_of e1 e2 = 
   let plus_id = Ident.create "Pervasives.+" in
@@ -224,6 +235,18 @@ let parse_record_exp {exp_desc} = match exp_desc with
   | Texp_record (fields,_) -> 
       List.map (fun (_,{lbl_name},exp) -> (lbl_name,exp)) fields
   | _ -> failwith "parse_record_exp: unexpected expression"
+
+let mk_simple_case id exp = 
+  let lhs = pat_of @@ Tpat_var (id, string_loc_of_id id) in
+  {c_lhs=lhs; c_guard=None; c_rhs=exp}
+
+let mk_simple_let_exp id1 id2 e3 = 
+  let pat = pat_of_id id1 in
+  let e2 = exp_of_id id2 in
+  let vb = {vb_pat=pat; vb_expr=e2; 
+            vb_attributes=[]; vb_loc=Location.none} in
+  let let_exp = exp_of @@ Texp_let (Nonrecursive, [vb],e3) in
+  let_exp
 
 let get_crtable_fn {exp_desc}= match exp_desc with
   | Texp_ident (Pdot (Pdot (Pident id, 

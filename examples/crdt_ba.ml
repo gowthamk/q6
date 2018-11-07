@@ -14,10 +14,8 @@ module Account(S:sig
   open S
 
   let get_balance (acc_id:Uuid.t) = 
-    let b = CRTable.find (fun {bal} -> bal) 
-              (fun {id} -> id = acc_id) t in
-    match b with | Some x -> CRInt.get x
-                 | None -> 0
+    CRTable.find (fun {bal} -> CRInt.get bal) 
+              (fun {id} -> id = acc_id) t
 
   let deposit (acc_id:Uuid.t) amt = 
     CRTable.update (fun {bal} -> CRInt.add amt bal)  
