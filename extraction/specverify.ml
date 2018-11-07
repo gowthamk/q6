@@ -7,6 +7,7 @@ open Speclang
 module S = SymbolicVal
 module P = Predicate
 module VC = Vc
+module QUtils = QueleaUtils
 
 exception Inconsistency
 exception UListMatched
@@ -506,6 +507,7 @@ let rec doIt_fun_app env (Fun.T fun_t) tyebinds arg_svs =
       (S.Fun new_fun, env)
 
 and doIt_expr env (expr:Typedtree.expression) : S.t * env = 
+  let _ = de_count := !de_count + 1 in
   let open Path in
   let v1 = expr.exp_loc.loc_start.pos_lnum in
   let v2 = expr.exp_loc.loc_start.pos_cnum - 
@@ -521,6 +523,12 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
   let is_table_mod id = 
     let tokens = Str.split (Str.regexp "_") (Ident.name id) in
       (List.length tokens >= 2) && (List.hd (List.rev tokens) = "table") in
+  (*let _ = printf "doIt_expr(%d)\n" !de_count in
+  let _ = if !de_count >= 1000 
+          then printf "  %s\n" (QUtils.pp_expr expr) in 
+  let _ = if !de_count >= 3593 && ((!de_count - 3593) mod 36 = 0) 
+          then VE.print env.ve in
+  let _ = flush_all () in*)
   let (res : S.t * env) = match expr.exp_desc with
     (* id *)
     | Texp_ident (path,_,_) -> 
@@ -645,7 +653,8 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
           (* UUID.create () *)
           | S.Var id when (Ident.name id = "Uuid.create") -> 
               let new_uuid = Ident.create @@ fresh_uuid_name () in
-              let _ = printf "Created %s\n" (Ident.name new_uuid) in
+              (*let _ = printf "Created %s\n" (Ident.name new_uuid)
+               * in*)
               let uuids = match KE.find_name "UUID" env.ke with
                 | Kind.Extendible prev -> prev
                 | _ -> failwith "UUID Unexpected" in
@@ -1194,6 +1203,8 @@ let mk_conc_vc schemas (ke,te,ve,pe) env1' env2' inv_pred =
    post=post}
 
 let doIt (ke,te,pe,ve) rdt_spec = 
+  (*let _ = printf "doIt begins\n" in
+  let _ = flush_all () in*)
   let _ = Gc.set {(Gc.get()) with Gc.minor_heap_size = 2048000; 
                                   Gc.space_overhead = 200} in
   let t = Sys.time() in
@@ -1222,6 +1233,7 @@ let doIt (ke,te,pe,ve) rdt_spec =
                  | None -> writes in 
   let _ = Printf.printf "Number of transactions: %d\n" 
             (List.length txn_list) in
+  let _ = flush_all () in
   let ke = KE.add (Type.other_id Type.eff) 
                   (Kind.Enum (!eff_consts@[L.e_nop])) ke in
   let env1s = List.map (fun t -> mk_env_for_fun (ke,te,[],ve) t)
