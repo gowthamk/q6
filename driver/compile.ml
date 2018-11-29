@@ -63,12 +63,13 @@ let print_if ppf flag printer arg =
 
 let (++) x f = f x
 
-let q6_compile ppf typedtree = 
-  let _ = Printf.printf "q6_compile\n" in
+let q6_compile ppf modulename typedtree = 
+  let _ = Printf.printf "Compiling %s to explicit effect IR...\n"
+            modulename in
   let tt' = Q.compile ppf typedtree in
   ()
 
-let q6_analyze ppf typedtree = 
+let q6_analyze ppf modulename typedtree = 
   let rdt_spec = (Rdtextract.doIt ppf typedtree) in
   let env = (Specelab.doIt rdt_spec) in
   (*let _ = match (rdt_spec,env) with 
@@ -115,9 +116,9 @@ let implementation ppf sourcefile outputprefix =
       ++ print_if ppf Clflags.dump_typedtree
         Printtyped.implementation_with_coercion in
     if !Clflags.compile_to_effs && is_crdt_mod sourcefile 
-    then q6_compile ppf typedtree 
+    then q6_compile ppf modulename typedtree 
     else if is_app_mod sourcefile 
-    then q6_analyze ppf typedtree
+    then q6_analyze ppf modulename typedtree
     else ();
     if !Clflags.print_types then begin
       Warnings.check_fatal ();

@@ -406,13 +406,16 @@ let assert_axioms ke =
   end
                    
 
-let assert_mb_contracts () = ()
-  (*let gt = const_of_name "Tweet_Get" in
-  let f a b c d = 
-    mk_and [oper(d) @= gt; so(a,b); 
-            vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in
-  let asns = List.map expr_of_quantifier [forallE4 f] in
-    _assert_all asns*)
+let assert_mb_contracts () = 
+  if !mb_causal || !mb_atomic 
+  then
+    let gt = const_of_name "Tweet_Get" in
+    let f a b c d = 
+      mk_and [oper(d) @= gt; so(a,b); 
+              vis(b,c); so(c,d); sameobj(a,d)] @=> vis(a,d) in
+    let asns = List.map expr_of_quantifier [forallE4 f] in
+      _assert_all asns
+  else ()
 
 let assert_ba_contracts () =
   let do_withdraw = const_of_name "do_withdraw" in
@@ -969,6 +972,7 @@ let doIt vcs =
   let _ = try Unix.mkdir "VCs" 0o777 
           with Unix.Unix_error(Unix.EEXIST,_,_) -> () in
   let t1 = Sys.time () in
+  let counter_eg = ref false in
   let _ = List.fold_left (fun prev_txn vc ->
     let open VC in
     let cur_txn = Ident.name vc.txn in
@@ -981,7 +985,7 @@ let doIt vcs =
         discharge vc;
         printf "  ✔\n";
       with 
-        | VerificationFailure -> printf "  ✘\n"
+        | VerificationFailure -> (counter_eg:= true; printf "  ✘\n")
         | InvalidCtxt -> printf "  k↑↻\n");
       flush_all ();
       reset ();
@@ -989,4 +993,9 @@ let doIt vcs =
       cur_txn;
     end) "" vcs in
   let t2 = Sys.time () in
-  printf "Verification took %fs\n" (t2-.t1);
+  printf "Analysis took %fs\n" (t2-.t1);
+  if !counter_eg then
+    printf "Verfication failed! See ./Graphs/exec_graph.dot for\
+            \ counterexample\n"
+  else
+    printf "Verification succeeded!\n"

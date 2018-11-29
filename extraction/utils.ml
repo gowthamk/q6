@@ -365,3 +365,6 @@ module QueleaUtils = struct
                          (pp_pat c_lhs) (pp_expr c_rhs)) cases
 
 end
+
+let mb_causal = ref false
+let mb_atomic = ref false

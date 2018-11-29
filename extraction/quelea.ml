@@ -141,7 +141,7 @@ let filter_table_mods tr_pairs str_items =
  * Second IR for table mod. Type annot_fun denotes a function
  * annotated with the label of the CRDT type it reads/writes.
  *)
-type crdt = CRInt | CRSet 
+type crdt = CRInt | CRSet | CROther
 
 type annot_fun = Fun.t * string * crdt
 
@@ -201,10 +201,11 @@ let rec maybe_crdt_of_core_type {ctyp_desc} = match ctyp_desc with
   | Ttyp_constr (Pdot (Pdot(Pident id,"CRSet",_),"t",_), _,_) 
     when Ident.name id = "Crdts" -> Some CRSet
   | Ttyp_constr(path, _, _) -> 
-      (printf "path is %s\n" @@ Printtyp.string_of_path path; None)
+      ((*printf "path is %s\n" @@ Printtyp.string_of_path path; *)
+       Some CROther)
   | Ttyp_alias (core_typ,_) -> maybe_crdt_of_core_type core_typ 
   | Ttyp_poly ([],core_typ) -> maybe_crdt_of_core_type core_typ
-  | _ -> None
+  | _ -> Some CROther
 
 let crdt_of_core_type core_type = 
   let fail_msg () = 
@@ -546,7 +547,11 @@ let transform_crfind id_exp eff_id wr_effs label crdt =
         let cdesc = cons_desc_of "[]" in
         let loc = longident_loc_of "[]" in
         let nil_e = exp_of @@ Texp_construct(loc, cdesc, []) in
-        exp_of @@ Texp_tuple [nil_e; nil_e] in
+        exp_of @@ Texp_tuple [nil_e; nil_e]
+    | _ -> 
+        let cdesc = cons_desc_of "[]" in
+        let loc = longident_loc_of "[]" in
+        exp_of @@ Texp_construct(loc, cdesc, []) in
   let fold_exp = exp_of @@ 
           Texp_apply (frexp, [(Nolabel, Some foldfn); 
                               (Nolabel, Some ctxt_exp);
@@ -555,7 +560,8 @@ let transform_crfind id_exp eff_id wr_effs label crdt =
     | CRInt -> fold_exp
     | CRSet -> exp_of @@ Texp_apply (exp_of_id @@ 
                                         Ident.create "compute_set", 
-                                     [(Nolabel, Some fold_exp)]) in
+                                     [(Nolabel, Some fold_exp)])
+    | _ -> fold_exp in
   let vb = {vb_pat=ctxt_pat; vb_expr=get_exp; 
             vb_attributes=[]; vb_loc=Location.none} in
   let let_exp = exp_of @@ Texp_let (Nonrecursive, [vb],inner_exp) in

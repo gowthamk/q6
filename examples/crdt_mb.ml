@@ -3,11 +3,18 @@ open Crdts
 module Microblog_Types = struct
   type user = {id:Uuid.t; name:string; mutable followers:Uuid.t CRSet.t}
   type users_table =  user CRTable.t
-  type tweet = {id:Uuid.t; author_id: Uuid.t; content: string}
+
+
+  type tweet = {id:Uuid.t; author_id: Uuid.t; content: string CRSet.t}
   type tweets_table = tweet CRTable.t
+
   type line_item = {(*user_*)id:Uuid.t; tweet_id:Uuid.t}
   type userline_table = line_item CRTable.t
+
+
   type timeline_table = line_item CRTable.t
+
+
   type mb_db = {users_table:users_table; 
                 tweets_table: tweets_table; 
                 userline_table: userline_table;
@@ -44,6 +51,10 @@ module Userline(S:sig
 
   let add (user_id:Uuid.t) (tweet_id:Uuid.t) = 
     CRTable.insert {id=user_id; tweet_id=tweet_id} t
+
+  let get (user_id:Uuid.t) =
+    CRTable.find (fun {tweet_id} -> tweet_id)
+      (fun {id} -> id = user_id) t
 end
 
 module Timeline(S:sig 
@@ -53,6 +64,10 @@ module Timeline(S:sig
 
   let add (user_id:Uuid.t) (tweet_id:Uuid.t) = 
     CRTable.insert {id=user_id; tweet_id=tweet_id} t
+
+  let get (user_id:Uuid.t) =
+    CRTable.find (fun {tweet_id} -> tweet_id)
+      (fun {id} -> id = user_id) t
 end
 
 module Tweet(S:sig
@@ -62,7 +77,11 @@ module Tweet(S:sig
 
   let add tweet_id author_id content = 
     CRTable.insert {id=tweet_id; author_id=author_id; 
-                    content=content} t
+                    content=CRSet.singleton content} t
+
+  let get tweet_id =
+    CRTable.find (fun {content} -> CRSet.get content)
+      (fun {id} -> id = tweet_id) t
 end
      
 module MicroblogApp(S:sig 
@@ -82,5 +101,13 @@ module MicroblogApp(S:sig
       Userline.add uid tweet_id;
       List.iter (fun fid -> Timeline.add fid tweet_id) fols;
     end
+
+  let inv_referential_integrity uid' = 
+    let ul_tweet_ids = Userline.get uid' in
+    let exists_in_tweet_table tid = 
+      match Tweet.get tid with
+        | tweet::_ -> true
+        | _ -> false in
+    List.for_all (exists_in_tweet_table) ul_tweet_ids
 
 end

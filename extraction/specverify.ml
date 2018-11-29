@@ -66,6 +66,8 @@ let pervasive_app id args = match args with
 
 let printf = Printf.printf
 
+let path_to_string path = String.concat "." (Path.all_names path)
+
 (*
  * "Fresh" utility functions.
  *)
@@ -643,6 +645,20 @@ and doIt_expr env (expr:Typedtree.expression) : S.t * env =
         let typ1 = type_of_tye env.ke e1.exp_type in
         let (effs_sv, env'') = doIt_get env' (sv1,typ1) sv2 in
           (effs_sv, env'')
+    (* f @@ e*)
+    | Texp_apply ({exp_desc=Texp_ident (path,_,_)}, 
+                  [(Nolabel, Some e1); 
+                   (Nolabel, Some e2)]) 
+        when (path_to_string path = "Pervasives.@@") ->
+          let new_exp_desc = Texp_apply (e1,[(Nolabel, Some e2)]) in
+          let new_exp = {expr with exp_desc=new_exp_desc} in
+            doIt_expr env new_exp
+    (* causall_do @@ ... *)
+    | Texp_apply ({exp_desc=Texp_ident (path,_,_)}, 
+                  [(Nolabel, Some e1)]) 
+        when (path_to_string path = "Q6_interface.causally_do") ->
+          let _ = mb_causal := true in
+            doIt_expr env e1
     (* f e *) (* (\x.e) e *)
     | Texp_apply (e1, largs) -> 
         let (sv1,env') = doIt_expr_rec env e1 in

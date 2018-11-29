@@ -20,5 +20,6 @@ module CRSet = struct
   let add x t = ()
   let remove x t = ()
   let get t = t
+  let singleton x = [x]
 end
 
